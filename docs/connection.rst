@@ -102,13 +102,25 @@ The ClientSecret is optional, as it is not needed when using, by eg, OAuth2 + PK
 The used refresh token will be updated If the response contains a refresh_token member.
 It is the access_token member of the return that will be used as the sdtoken until it expires.
 
-Alternatively, for Azure-hosted deployments (Azure VMs, Azure Container Instances, 
-AKS, etc.), you can use `MsiEnable` instead of providing an explicit SdToken or 
-using RefreshToken flow. When `MsiEnable` is set to true (or yes, on, 1), OpenVDS 
-will automatically fetch an access token from Azure's Instance Metadata Service 
-(IMDS) using Managed Identity. This only works when running on Azure infrastructure 
-with Managed Identity configured. Key values can use `snake_case` (msi_enable) or 
-`CamelCase` (MsiEnable).
+Alternatively, for Azure-hosted deployments, you can use Azure identity-based 
+authentication instead of providing an explicit SdToken or using RefreshToken flow. 
+OpenVDS supports two Azure authentication mechanisms:
+
+1. **Managed Identity (MSI)**: When `MsiEnable` is set to true (or yes, on, 1), 
+   OpenVDS will automatically fetch an access token from Azure's Instance Metadata 
+   Service (IMDS) using Managed Identity. This works for Azure VMs, Azure Container 
+   Instances, AKS, and other Azure infrastructure with Managed Identity configured.
+
+2. **Workload Identity**: When `WorkloadIdentityEnable` is set to true (or yes, on, 1), 
+   OpenVDS will automatically fetch an access token using Azure Workload Identity. 
+   This is designed for Kubernetes workloads running in Azure Kubernetes Service (AKS) 
+   with Workload Identity configured for the pod.
+
+**Note**: If both `WorkloadIdentityEnable` and `MsiEnable` are set to true, 
+Workload Identity takes precedence and will be used for authentication.
+
+Key values can use `snake_case` (msi_enable, workload_identity_enable) or 
+`CamelCase` (MsiEnable, WorkloadIdentityEnable).
 
 NOTE: Key values for `sd` can use `snake_case` instead of `CammelCase` to match the
 look and feel of the response from the token provider.
@@ -146,6 +158,9 @@ SD::
   
   # Or using Azure Managed Identity (for Azure-hosted deployments):
   connection = "sdauthorityurl=https://some_osdu.instance.com/seistore-svc/api/v3;sdapikey=ABC;msienable=true"
+  
+  # Or using Azure Workload Identity (for AKS workloads):
+  connection = "sdauthorityurl=https://some_osdu.instance.com/seistore-svc/api/v3;sdapikey=ABC;workloadidentityenable=true"
 
 AzureSAS::
 

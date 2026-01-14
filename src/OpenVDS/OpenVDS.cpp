@@ -51,6 +51,7 @@
 #include <OpenVDS/OpenVDSVersion.h>
 #include "VDS/Logging.h"
 #include "IO/MsiTokenSource.h"
+#include "IO/WorkloadIdentityTokenSource.h"
 
 namespace OpenVDS
 {
@@ -289,6 +290,48 @@ static std::unique_ptr<OpenOptions> createAzureSASOpenOptions(const std::string 
 const std::set<std::string> TrueWords = { "true", "yes", "on" };
 const std::set<std::string> FalseWords = { "false", "no", "off" };
 
+static bool tryFetchMsiToken(DMSOpenOptions* openOptions, Error& error)
+{
+  Logger logger(static_cast<GlobalStateImpl*>(OpenVDS::GetGlobalState())->logInterface, LogLevel::Info);
+  logger.LogInfo("tryFetchMsiToken: MSI ENABLE : TRUE");
+  
+  std::string msiToken = OpenVDS::FetchMsiTokenFromImds();
+  if (!msiToken.empty())
+  {
+    openOptions->sdToken = std::move(msiToken);
+    logger.LogInfo("tryFetchMsiToken: obtained MSI token and assigned to sdToken");
+    return true;
+  }
+  else
+  {
+    logger.LogError("tryFetchMsiToken: MSI token not available from IMDS");
+    error.code = -1;
+    error.string = "MSI token not available from IMDS (msienable=true)";
+    return false;
+  }
+}
+
+static bool tryFetchWorkloadIdentityToken(DMSOpenOptions* openOptions, Error& error)
+{
+  Logger logger(static_cast<GlobalStateImpl*>(OpenVDS::GetGlobalState())->logInterface, LogLevel::Info);
+  logger.LogInfo("tryFetchWorkloadIdentityToken: WORKLOAD IDENTITY ENABLE : TRUE");
+  
+  std::string workloadIdentityToken = FetchWorkloadIdentityToken();
+  if (!workloadIdentityToken.empty())
+  {
+    openOptions->sdToken = std::move(workloadIdentityToken);
+    logger.LogInfo("tryFetchWorkloadIdentityToken: obtained Workload Identity token and assigned to sdToken");
+    return true;
+  }
+  else
+  {
+    logger.LogError("tryFetchWorkloadIdentityToken: Workload Identity token not available");
+    error.code = -1;
+    error.string = "Workload Identity token not available (workloadidentityenable=true)";
+    return false;
+  }
+}
+
 static std::unique_ptr<OpenOptions> createGoogleOpenOptions(const std::string & url, const std::string & connectionString, Error& error)
 {
   std::unique_ptr<GoogleOpenOptions> openOptions(new GoogleOpenOptions());
@@ -384,6 +427,10 @@ static std::unique_ptr<OpenOptions> createDMSOpenOptions(const std::string & url
 
   openOptions->datasetPath = url;
 
+  // Check for authentication methods - Workload Identity takes priority over MSI
+  bool workloadIdentityEnabled = false;
+  bool msiEnabled = false;
+
   for (auto& connectionPair : connectionStringMap)
   {
     if (connectionPair.first == "sdauthorityurl" || connectionPair.first == "sd_authority_url")
@@ -409,27 +456,18 @@ static std::unique_ptr<OpenOptions> createDMSOpenOptions(const std::string & url
       openOptions->legalTag = connectionPair.second;
     if (connectionPair.first == "httpproxy" || connectionPair.first == "http_proxy")
       openOptions->httpProxy = connectionPair.second;
-    if (connectionPair.first == "msienable" || connectionPair.first == "msi_enable") {
-      Logger logger(static_cast<GlobalStateImpl*>(OpenVDS::GetGlobalState())->logInterface, LogLevel::Info);
-      logger.LogInfo("createDMSOpenOptions: MSI ENABLE : TRUE");
-      std::string msiToken = OpenVDS::FetchMsiTokenFromImds();
-      // Log whether we obtained an MSI token or not for diagnostics.
-      if (!msiToken.empty())
-      {
-        openOptions->sdToken = std::move(msiToken);
-        logger.LogInfo("createDMSOpenOptions: obtained MSI token and assigned to sdToken");
-      }
-      else
-      {
-        // Explicit MSI was requested but failed -> treat as error and abort open/options creation.
-        logger.LogError("createDMSOpenOptions: MSI token not available from IMDS");
-        error.code = -1;
-        error.string = "MSI token not available from IMDS (msienable=true)";
-        return nullptr;
-      }
-    }
+    if (connectionPair.first == "workloadidentityenable" || connectionPair.first == "workload_identity_enable")
+      workloadIdentityEnabled = isTrue(connectionPair.second);
+    else if (connectionPair.first == "msienable" || connectionPair.first == "msi_enable")
+      msiEnabled = isTrue(connectionPair.second);
   }
-  return openOptions;
+  
+  if (workloadIdentityEnabled)
+    return tryFetchWorkloadIdentityToken(openOptions.get(), error) ? std::move(openOptions) : nullptr;
+  else if (msiEnabled)
+    return tryFetchMsiToken(openOptions.get(), error) ? std::move(openOptions) : nullptr;
+  else
+    return openOptions;
 }
 
 static std::unique_ptr<OpenOptions> createHttpOpenOptions(const std::string & url, const std::string & connectionString, Error& error)

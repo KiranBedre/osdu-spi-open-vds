@@ -199,6 +199,37 @@ Azure Blob Storage [Azure Storage Client Library for C++ (7.5.0)]:
 - None
 - See https://github.com/Azure/azure-storage-cpp for more
 
+#### Azure Authentication Methods
+
+OpenVDS supports multiple authentication methods for Azure Blob Storage and OSDU/DELFI Seismic DMS:
+
+**1. Managed Service Identity (MSI)**
+- Automatic authentication using Azure Managed Identity
+- Works on Azure VMs, App Services, and other Azure resources
+- Enable via connection string: `msienable=true` or `msi_enable=true`
+- Example for OSDU DMS:
+  ```
+  sd://tenant/subproject/dataset?msienable=true
+  ```
+
+**2. Azure Workload Identity**
+- Federated identity for Kubernetes/AKS workloads
+- Uses service account token exchange for authentication
+- Enable via connection string: `workloadidentityenable=true` or `workload_identity_enable=true`
+- Requires proper Kubernetes service account configuration with Azure AD federation
+- Example for OSDU DMS:
+  ```
+  sd://tenant/subproject/dataset?workloadidentityenable=true
+  ```
+
+**3. Manual Credential Authentication**
+- For Azure Blob Storage: account keys, SAS tokens, or bearer tokens
+- For OSDU DMS: API keys, bearer tokens, client ID/secret, refresh tokens
+- Credentials are explicitly provided via connection string parameters
+- See tool-specific documentation for connection string formats
+
+Note: MSI and Workload Identity provide Azure AD-based authentication to Azure resources (Blob Storage via OSDU DMS). Manual credential authentication is the fallback when Azure AD authentication is not used. MSI and Workload Identity are mutually exclusive - if Workload Identity is enabled, MSI will be ignored.
+
 Google Cloud Storage:
 - `GOOGLE_CLOUD_PROJECT`
 - `GOOGLE_CLOUD_CPP_ENABLE_CLOG`

@@ -54,6 +54,7 @@ else()
     IO/IORefreshToken.cpp
     IO/IOManagerDmsProxy.cpp
     IO/MsiTokenSource.cpp
+    IO/WorkloadIdentityTokenSource.cpp
     IO/DmsIoFactories/AzureDmsIoManagerFactory.cpp
     IO/DmsIoFactories/AwsDmsIoManagerFactory.cpp
     IO/DmsIoFactories/DmsIoManagerFactory.cpp
@@ -108,6 +109,7 @@ else()
     IO/SDPath.h
     IO/ErrorRequest.h
     IO/MsiTokenSource.h
+    IO/WorkloadIdentityTokenSource.h
     IO/IOManagerDmsProxy.h
     IO/DmsIoFactories/AzureDmsIoManagerFactory.h
     IO/DmsIoFactories/AwsDmsIoManagerFactory.h
@@ -278,7 +280,7 @@ if (NOT EMSCRIPTEN)
     target_compile_definitions(openvds_objects PRIVATE OPENVDS_NO_AZURE_SDK_FOR_CPP_IOMANAGER)
     set_source_files_properties(IO/IOManagerAzureSdkForCpp.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
   else()
-    target_link_libraries(openvds_objects PRIVATE azure-core)
+    target_link_libraries(openvds_objects PRIVATE azure-core azure-identity)
   endif()
 
   if (DISABLE_CURL_IOMANAGER AND DISABLE_AWS_IOMANAGER AND DISABLE_AZURE_PRESIGNED_IOMANAGER AND DISABLE_GCP_IOMANAGER AND DISABLE_DMS_IOMANAGER)

@@ -15,6 +15,7 @@ find_package(Threads REQUIRED)
 set (AZ_CORE_DIR "${azure-sdk-for-cpp_SOURCE_DIR}/sdk/core/azure-core")
 set (AZ_STORAGE_COMMON_DIR "${azure-sdk-for-cpp_SOURCE_DIR}/sdk/storage/azure-storage-common")
 set (AZ_STORAGE_BLOBS_DIR "${azure-sdk-for-cpp_SOURCE_DIR}/sdk/storage/azure-storage-blobs")
+set (AZ_IDENTITY_DIR "${azure-sdk-for-cpp_SOURCE_DIR}/sdk/identity/azure-identity")
 
 if(WIN32)
     #set(BUILD_TRANSPORT_WINHTTP ON)
@@ -63,6 +64,7 @@ set(
     ${AZ_CORE_DIR}/inc/azure/core/operation_status.hpp
     ${AZ_CORE_DIR}/inc/azure/core/paged_response.hpp
     ${AZ_CORE_DIR}/inc/azure/core/platform.hpp
+    ${AZ_CORE_DIR}/inc/azure/core/resource_identifier.hpp
     ${AZ_CORE_DIR}/inc/azure/core/response.hpp
     ${AZ_CORE_DIR}/inc/azure/core/rtti.hpp
     ${AZ_CORE_DIR}/inc/azure/core/url.hpp
@@ -88,7 +90,6 @@ set(
     ${AZ_CORE_DIR}/inc/azure/core/internal/diagnostics/log.hpp
     ${AZ_CORE_DIR}/inc/azure/core/internal/http/http_sanitizer.hpp
     ${AZ_CORE_DIR}/inc/azure/core/internal/http/pipeline.hpp
-    ${AZ_CORE_DIR}/inc/azure/core/internal/http/user_agent.hpp
     ${AZ_CORE_DIR}/inc/azure/core/internal/io/null_body_stream.hpp
     ${AZ_CORE_DIR}/inc/azure/core/internal/json/json.hpp
     ${AZ_CORE_DIR}/inc/azure/core/internal/json/json_optional.hpp
@@ -210,7 +211,40 @@ set(
     ${AZ_STORAGE_BLOBS_DIR}/src/private/avro_parser.cpp
 )
 
+set(
+  AZURE_IDENTITY_HEADER
+    ${AZ_IDENTITY_DIR}/inc/azure/identity.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/dll_import_export.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/rtti.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/chained_token_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/client_assertion_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/client_certificate_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/client_secret_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/default_azure_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/environment_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/managed_identity_credential.hpp
+    ${AZ_IDENTITY_DIR}/inc/azure/identity/workload_identity_credential.hpp
+)
+
+set(
+  AZURE_IDENTITY_SOURCE
+    ${AZ_IDENTITY_DIR}/src/chained_token_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/client_assertion_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/client_certificate_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/client_credential_core.cpp
+    ${AZ_IDENTITY_DIR}/src/client_secret_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/default_azure_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/environment_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/managed_identity_credential.cpp
+    ${AZ_IDENTITY_DIR}/src/managed_identity_source.cpp
+    ${AZ_IDENTITY_DIR}/src/tenant_id_resolver.cpp
+    ${AZ_IDENTITY_DIR}/src/token_cache.cpp
+    ${AZ_IDENTITY_DIR}/src/token_credential_impl.cpp
+    ${AZ_IDENTITY_DIR}/src/workload_identity_credential.cpp
+)
+
 add_library(azure-core STATIC ${AZURE_CORE_HEADER} ${AZURE_CORE_SOURCE} ${AZURE_STORAGE_COMMON_HEADER} ${AZURE_STORAGE_COMMON_SOURCE}  ${AZURE_STORAGE_BLOBS_HEADER} ${AZURE_STORAGE_BLOBS_SOURCE})
+add_library(azure-identity STATIC ${AZURE_IDENTITY_HEADER} ${AZURE_IDENTITY_SOURCE})
 
 target_include_directories(
   azure-core
@@ -220,15 +254,28 @@ target_include_directories(
       ${AZ_STORAGE_BLOBS_DIR}/inc
 )
 
+target_include_directories(
+  azure-identity
+    PUBLIC
+      ${AZ_CORE_DIR}/inc
+      ${AZ_IDENTITY_DIR}/inc
+    PRIVATE
+      ${AZ_IDENTITY_DIR}/src
+)
+
 # make sure that users can consume the project as a library.
 add_library(Azure::azure-core ALIAS azure-core)
+add_library(Azure::azure-identity ALIAS azure-identity)
 
 target_link_libraries(azure-core INTERFACE Threads::Threads)
+target_link_libraries(azure-identity PUBLIC azure-core)
 
 get_property(include_3rdparty      GLOBAL PROPERTY OPENVDS_INCLUDE_LIBRARIES)
 addSystemHeadersToTarget(azure-core "${include_3rdparty}")
+addSystemHeadersToTarget(azure-identity "${include_3rdparty}")
 
 setCompilerFlagsForTarget(azure-core)
+setCompilerFlagsForTarget(azure-identity)
 
 if(BUILD_TRANSPORT_CURL)
   if (USE_LIBRESSL)
