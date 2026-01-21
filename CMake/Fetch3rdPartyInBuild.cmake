@@ -97,6 +97,8 @@ function(Fetch3rdParty)
     set(Fetch3rdPartyDir "${Fetch3rdPartyDirInternal}/../3rdparty")
   endif()
 
+  set(azure-sdk-for-cpp_patch git --git-dir= apply --ignore-whitespace --ignore-space-change --unsafe-paths -v --directory ${Fetch3rdPartyDir}/azure-sdk-for-cpp-1.16.0 ${Fetch3rdPartyDirInternal}/../3rdparty/BuildAzureSdkForCpp/0001-Fix-use-of-namespace-qualifiers-for-VS2017.patch)
+
   Fetch3rdParty_Git(aws-crt-cpp           0.19.8     https://github.com/awslabs/aws-crt-cpp.git                                           v0.19.8)
   Fetch3rdParty_Package(gtest             1.12.1     https://github.com/google/googletest/archive/refs/tags/release-1.12.1.tar.gz         SHA256=81964fe578e9bd7c94dfdb09c8e4d6e6759e19967e397dbea48d1c10e45d0df2)
   Fetch3rdParty_Package(benchmark         1.6.1      https://github.com/google/benchmark/archive/refs/tags/v1.6.1.tar.gz                  SHA256=6132883bc8c9b0df5375b16ab520fac1a85dc9e4cf5be59480448ece74b278d4)
@@ -119,11 +121,9 @@ function(Fetch3rdParty)
   Fetch3rdParty_Package(cmakerc           e7ba9e     https://github.com/vector-of-bool/cmrc/archive/e7ba9e9417960b2a5cefc9e79e8af8b06bfde3d1.zip SHA256=75c1263bb37b8bae159bacb4da10fd2eb50b9c04118901218b6a817b9d0fa757)
   Fetch3rdParty_Package(cxxopts           3.3.1      https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.3.1.tar.gz SHA256=3bfc70542c521d4b55a46429d808178916a579b28d048bd8c727ee76c39e2072)
   Fetch3rdParty_Package(sse2neon          1.5.1      https://github.com/DLTcollab/sse2neon/archive/refs/tags/v1.5.1.tar.gz SHA256=4001e2dfb14fcf3831211581ed83bcc83cf6a3a69f638dcbaa899044a351bb2a)
-  # we don't need it since we build azure-sdk-for-cpp with curl
-  #  if(WIN32)
-  #    Fetch3rdParty_Package(wil               ecbb39971  https://github.com/microsoft/wil/archive/ecbb399714820a88b2a8e4522654fd5ea9167803.zip SHA256=96e47dd9e4164a5f8fbeed677996edbadccb4ac18acca8f1057f01ba9b98ef0c)
-  #  endif()
-
+  if(WIN32)
+    Fetch3rdParty_Package(wil             1.0.250325.1  https://github.com/microsoft/wil/archive/refs/tags/v1.0.250325.1.tar.gz SHA256=c9e667d5f86ded43d17b5669d243e95ca7b437e3a167c170805ffd4aa8a9a786)
+  endif()
 
 endfunction()
 

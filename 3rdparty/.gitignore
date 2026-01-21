@@ -27,3 +27,4 @@ openssl*
 benchmark*
 sse2neon*
 cxxopts*
+wil*

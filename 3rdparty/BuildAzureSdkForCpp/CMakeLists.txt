@@ -263,6 +263,14 @@ target_include_directories(
       ${AZ_IDENTITY_DIR}/src
 )
 
+if(WIN32)
+  target_include_directories(
+    azure-identity
+      PRIVATE
+        ${wil_SOURCE_DIR}/include
+  )
+endif()
+
 # make sure that users can consume the project as a library.
 add_library(Azure::azure-core ALIAS azure-core)
 add_library(Azure::azure-identity ALIAS azure-identity)
