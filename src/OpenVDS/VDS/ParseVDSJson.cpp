@@ -27,6 +27,7 @@
 #include "Bitmask.h"
 
 #include <Base64/Base64.h>
+#include <fmt/format.h>
 
 namespace OpenVDS
 {

@@ -26,6 +26,7 @@
 #include <thread>
 #include <vector>
 #include <cstdlib>
+#include <string>
 
 class ThreadPool
 {
@@ -37,6 +38,8 @@ public:
   ~ThreadPool();
 
   size_t ThreadCount() const;
+  std::thread::id ThreadID(int worker) const;
+
   static int ConfigureThreadCount(const char *envVariableName, int defaultValue = std::thread::hardware_concurrency());
 private:
   std::vector<std::thread> workers;
@@ -117,6 +120,11 @@ inline ThreadPool::~ThreadPool()
 inline size_t ThreadPool::ThreadCount() const
 {
   return workers.size();
+}
+
+inline std::thread::id ThreadPool::ThreadID(int worker) const
+{
+  return const_cast<std::thread&>(workers[worker]).get_id();
 }
 
 inline int ThreadPool::ConfigureThreadCount(const char *envVariableName, int defaultValue)
