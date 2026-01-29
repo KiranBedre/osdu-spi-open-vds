@@ -506,6 +506,12 @@ GTEST_TEST(OpenVDS_integration, RequestVolumeSubsetIntegerFormatConversionU8)
   }
 }
 
+uint8_t QuantizeToU8(float value, float valueRangeMin, float valueRangeMax)
+{
+  float qauntizedValue = (value - valueRangeMin) * (255.0f / (valueRangeMax - valueRangeMin));
+  return qauntizedValue <= 0 ? uint8_t(0) : qauntizedValue < 255 ? uint8_t(qauntizedValue + 0.5f) : uint8_t(255);
+}
+
 GTEST_TEST(OpenVDS_integration, RequestVolumeSubsetIntegerFormatConversionU16)
 {
   int dim[3] = { 100, 100, 200 };
@@ -532,24 +538,135 @@ GTEST_TEST(OpenVDS_integration, RequestVolumeSubsetIntegerFormatConversionU16)
   int sizeK = voxelMax[0] - voxelMin[0];
   int sizeJK = sizeJ * sizeK;
 
+  auto requestU8    = accessManager.RequestVolumeSubset<uint8_t> (OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
   auto requestInt   = accessManager.RequestVolumeSubset<uint16_t>(OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
   auto requestFloat = accessManager.RequestVolumeSubset<float>   (OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
+  const uint8_t  *dataU8     = requestU8->Data().data();
   const uint16_t *dataInt   = requestInt->Data().data();
   const float    *dataFloat = requestFloat->Data().data();
   float scale  = accessManager.GetVolumeDataLayout()->GetChannelIntegerScale(0);
   float offset = accessManager.GetVolumeDataLayout()->GetChannelIntegerOffset(0);
+  float valueRangeMin = accessManager.GetVolumeDataLayout()->GetChannelValueRangeMin(0);
+  float valueRangeMax = accessManager.GetVolumeDataLayout()->GetChannelValueRangeMax(0);
 
   for(int i = 0; i < sizeI; i++)
   for(int j = 0; j < sizeJ; j++)
   for(int k = 0; k < sizeK; k++)
   {
+    uint8_t  valueU8    = dataU8   [i * sizeJK + j * sizeK + k];
     uint16_t valueInt   = dataInt  [i * sizeJK + j * sizeK + k];
     float    valueFloat = dataFloat[i * sizeJK + j * sizeK + k];
+
+    uint8_t  valueIntAsU8 = QuantizeToU8(valueFloat, valueRangeMin, valueRangeMax);
 
     if(valueInt * scale + offset != valueFloat)
     {
       ASSERT_EQ(valueInt * scale + offset, valueFloat);
       break;
     }
+    if(std::abs(valueIntAsU8 - valueU8) > 1)
+    {
+      EXPECT_NEAR(valueIntAsU8, valueU8, 1);
+      break;
+    }
   }
+}
+
+GTEST_TEST(OpenVDS_integration, RequestVolumeSubsetIntegerFormatConversionU16Constant)
+{
+  OpenVDS::Error error;
+
+  const OpenVDS::VDSFileOpenOptions openOptions("RequestConstantVolumeSubsetIntegerFormatConversionU16.vds");
+  remove(openOptions.fileName.c_str());
+
+  OpenVDS::VolumeDataLayoutDescriptor
+    layoutDescriptor = OpenVDS::VolumeDataLayoutDescriptor(OpenVDS::VolumeDataLayoutDescriptor::BrickSize_64, 0, 0, 4,
+      OpenVDS::VolumeDataLayoutDescriptor::LODLevels_None,
+      OpenVDS::VolumeDataLayoutDescriptor::Options_None);
+
+  std::vector<OpenVDS::VolumeDataAxisDescriptor>
+    axisDescriptors = { OpenVDS::VolumeDataAxisDescriptor(100, "X", "m", 0.0, 2000.0),
+                        OpenVDS::VolumeDataAxisDescriptor(100, "Y", "m", 0.0, 2000.0),
+                        OpenVDS::VolumeDataAxisDescriptor(200, "Z", "m", 0.0, 2000.0) };
+
+  float integerScale = 0.1f;
+  float integerOffset = -50.0f;
+
+  std::vector<OpenVDS::VolumeDataChannelDescriptor>
+    channelDescriptors = { OpenVDS::VolumeDataChannelDescriptor(OpenVDS::VolumeDataFormat::Format_U16, OpenVDS::VolumeDataComponents::Components_1, "Value", "", 0.0, 300.0, OpenVDS::VolumeDataMapping::Direct, 1, OpenVDS::VolumeDataChannelDescriptor::Default, integerScale, integerOffset) };
+
+  OpenVDS::MetadataContainer
+    metadataContainer;
+
+  OpenVDS::ScopedVDSHandle handle = OpenVDS::Create(openOptions, layoutDescriptor, axisDescriptors, channelDescriptors, metadataContainer, error);
+  ASSERT_EQ(error.code, 0);
+
+  OpenVDS::VolumeDataAccessManager accessManager = OpenVDS::GetAccessManager(handle);
+
+  std::shared_ptr<OpenVDS::VolumeDataPageAccessor> pageAccessor = accessManager.CreateVolumeDataPageAccessor(OpenVDS::Dimensions_012, 0, 0, 100, OpenVDS::VolumeDataAccessManager::AccessMode_Create);
+
+  fillVolumeDataPages(pageAccessor, [integerOffset, integerScale](void*buffer, OpenVDS::VolumeDataFormat format, OpenVDS::VolumeIndexer3D const &outputIndexer)
+  {
+    assert(format == OpenVDS::VolumeDataFormat::Format_U16);
+    for(int i = 0; i < outputIndexer.GetDataBlockNumSamples(2); i++)
+    for(int j = 0; j < outputIndexer.GetDataBlockNumSamples(1); j++)
+    for(int k = 0; k < outputIndexer.GetDataBlockNumSamples(0); k++)
+    {
+      reinterpret_cast<uint16_t*>(buffer)[outputIndexer.LocalChunkIndexToDataIndex(OpenVDS::IntVector3(k, j, i))] = uint16_t((50.0f-integerOffset)/integerScale);
+    }
+  });
+
+  accessManager.Flush(error);
+  ASSERT_EQ(error.code, 0);
+
+  handle = OpenVDS::Open(openOptions, error);
+  ASSERT_EQ(error.code, 0);
+  accessManager = OpenVDS::GetAccessManager(handle);
+
+  int voxelMin[] = { 13, 13, 119,  0, 0, 0};
+  int voxelMax[] = { 23, 23, 129,  1, 1, 1};
+
+  const int LOD = 0;
+  const int channel = 0;
+
+  int sizeI = voxelMax[2] - voxelMin[2];
+  int sizeJ = voxelMax[1] - voxelMin[1];
+  int sizeK = voxelMax[0] - voxelMin[0];
+  int sizeJK = sizeJ * sizeK;
+
+  auto requestU8    = accessManager.RequestVolumeSubset<uint8_t> (OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
+  auto requestInt   = accessManager.RequestVolumeSubset<uint16_t>(OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
+  auto requestFloat = accessManager.RequestVolumeSubset<float>   (OpenVDS::DimensionsND::Dimensions_012, LOD, channel, voxelMin, voxelMax);
+  const uint8_t  *dataU8     = requestU8->Data().data();
+  const uint16_t *dataInt   = requestInt->Data().data();
+  const float    *dataFloat = requestFloat->Data().data();
+  float scale  = accessManager.GetVolumeDataLayout()->GetChannelIntegerScale(0);
+  float offset = accessManager.GetVolumeDataLayout()->GetChannelIntegerOffset(0);
+  float valueRangeMin = accessManager.GetVolumeDataLayout()->GetChannelValueRangeMin(0);
+  float valueRangeMax = accessManager.GetVolumeDataLayout()->GetChannelValueRangeMax(0);
+
+  for(int i = 0; i < sizeI; i++)
+  for(int j = 0; j < sizeJ; j++)
+  for(int k = 0; k < sizeK; k++)
+  {
+    uint8_t  valueU8    = dataU8   [i * sizeJK + j * sizeK + k];
+    uint16_t valueInt   = dataInt  [i * sizeJK + j * sizeK + k];
+    float    valueFloat = dataFloat[i * sizeJK + j * sizeK + k];
+
+    uint8_t  valueIntAsU8 = QuantizeToU8(valueFloat, valueRangeMin, valueRangeMax);
+
+    if(valueInt * scale + offset != valueFloat)
+    {
+      ASSERT_EQ(valueInt * scale + offset, valueFloat);
+      break;
+    }
+    if(std::abs(valueIntAsU8 - valueU8) > 1)
+    {
+      ASSERT_NEAR(valueIntAsU8, valueU8, 1);
+      break;
+    }
+  }
+
+  handle.Close();
+  remove(openOptions.fileName.c_str());
 }
