@@ -663,38 +663,35 @@ static float GetConvertedConstantValue(VolumeDataChannelDescriptor const &volume
   {
     return float(constantValueVolumeDataHash.GetConstantValue(0) != 0);
   }
-  else if(format == VolumeDataChannelDescriptor::Format_U8 || format == VolumeDataChannelDescriptor::Format_U16)
+  else if(format == VolumeDataChannelDescriptor::Format_U8)
   {
-    if(constantValueVolumeDataHash.IsNoValue())
+    bool isConvertWithValueRange = volumeDataChannelDescriptor.GetFormat() != VolumeDataChannelDescriptor::Format_U8;
+
+    if (volumeDataChannelDescriptor.IsUseNoValue())
     {
-      if(format == VolumeDataChannelDescriptor::Format_U8)
-      {
-        return ConvertNoValue<uint8_t>(noValue);
-      }
-      else
-      {
-        assert(format == VolumeDataChannelDescriptor::Format_U16);
-        return ConvertNoValue<uint16_t>(noValue);
-      }
-    }
-
-    int32_t buckets = (format == VolumeDataChannelDescriptor::Format_U8 ? 256 : 65536) - volumeDataChannelDescriptor.IsUseNoValue();
-
-    float reciprocalScale;
-    float offset;
-
-    if(volumeDataChannelDescriptor.GetFormat() != VolumeDataChannelDescriptor::Format_U8 && volumeDataChannelDescriptor.GetFormat() != VolumeDataChannelDescriptor::Format_U16)
-    {
-      offset = volumeDataChannelDescriptor.GetValueRange().Min;
-      reciprocalScale = float(buckets - 1) / rangeSize(volumeDataChannelDescriptor.GetValueRange());
+      QuantizingValueConverterWithNoValue<uint8_t, float, true> converter(volumeDataChannelDescriptor.GetValueRangeMin(), volumeDataChannelDescriptor.GetValueRangeMax(), volumeDataChannelDescriptor.GetIntegerScale(), volumeDataChannelDescriptor.GetIntegerOffset(), volumeDataChannelDescriptor.GetNoValue(), volumeDataChannelDescriptor.GetNoValue(), isConvertWithValueRange);
+      return (float)converter.ConvertValue(constantValueVolumeDataHash.GetConstantValue(volumeDataChannelDescriptor.GetNoValue()));
     }
     else
     {
-      offset = volumeDataChannelDescriptor.GetIntegerOffset();
-      reciprocalScale = 1.0f / volumeDataChannelDescriptor.GetIntegerScale();
+      QuantizingValueConverterWithNoValue<uint8_t, float, false> converter(volumeDataChannelDescriptor.GetValueRangeMin(), volumeDataChannelDescriptor.GetValueRangeMax(), volumeDataChannelDescriptor.GetIntegerScale(), volumeDataChannelDescriptor.GetIntegerOffset(), volumeDataChannelDescriptor.GetNoValue(), volumeDataChannelDescriptor.GetNoValue(), isConvertWithValueRange);
+      return (float)converter.ConvertValue(constantValueVolumeDataHash.GetConstantValue(0.0f));
     }
+  }
+  else if(format == VolumeDataChannelDescriptor::Format_U16)
+  {
+    bool isConvertWithValueRange = volumeDataChannelDescriptor.GetFormat() != VolumeDataChannelDescriptor::Format_U8 && volumeDataChannelDescriptor.GetFormat() != VolumeDataChannelDescriptor::Format_U16;
 
-    return (float)QuantizeValueWithReciprocalScale(constantValueVolumeDataHash.GetConstantValue(noValue), offset, reciprocalScale, buckets);
+    if (volumeDataChannelDescriptor.IsUseNoValue())
+    {
+      QuantizingValueConverterWithNoValue<uint16_t, float, true> converter(volumeDataChannelDescriptor.GetValueRangeMin(), volumeDataChannelDescriptor.GetValueRangeMax(), volumeDataChannelDescriptor.GetIntegerScale(), volumeDataChannelDescriptor.GetIntegerOffset(), volumeDataChannelDescriptor.GetNoValue(), volumeDataChannelDescriptor.GetNoValue(), isConvertWithValueRange);
+      return (float)converter.ConvertValue(constantValueVolumeDataHash.GetConstantValue(volumeDataChannelDescriptor.GetNoValue()));
+    }
+    else
+    {
+      QuantizingValueConverterWithNoValue<uint16_t, float, false> converter(volumeDataChannelDescriptor.GetValueRangeMin(), volumeDataChannelDescriptor.GetValueRangeMax(), volumeDataChannelDescriptor.GetIntegerScale(), volumeDataChannelDescriptor.GetIntegerOffset(), volumeDataChannelDescriptor.GetNoValue(), volumeDataChannelDescriptor.GetNoValue(), isConvertWithValueRange);
+      return (float)converter.ConvertValue(constantValueVolumeDataHash.GetConstantValue(0.0f));
+    }
   }
   else
   {
