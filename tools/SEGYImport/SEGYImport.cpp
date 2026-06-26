@@ -2263,9 +2263,22 @@ int64_t calculateActiveTraceCount(const SEGYFileInfo& fileInfo, const std::vecto
     sortedSegmentInfo;
 
   // Merge segment info and create an ordered vector
-  for (const auto& segmentInfoList : fileInfo.m_segmentInfoLists)
+  if (fileInfo.IsOffsetSorted())
   {
-    sortedSegmentInfo.insert(sortedSegmentInfo.end(), segmentInfoList.begin(), segmentInfoList.end());
+    for (const auto& offsetSegments : fileInfo.m_segmentInfoListsByOffset)
+    {
+      for (const auto& entry : offsetSegments)
+      {
+        sortedSegmentInfo.insert(sortedSegmentInfo.end(), entry.second.begin(), entry.second.end());
+      }
+    }
+  }
+  else
+  {
+    for (const auto& segmentInfoList : fileInfo.m_segmentInfoLists)
+    {
+      sortedSegmentInfo.insert(sortedSegmentInfo.end(), segmentInfoList.begin(), segmentInfoList.end());
+    }
   }
   if(isPrimaryIncreasing)
   {
@@ -2287,7 +2300,7 @@ int64_t calculateActiveTraceCount(const SEGYFileInfo& fileInfo, const std::vecto
     currentStartStopIndices = getSegmentStartStopIndex(*segmentInfoIterator, primaryAxis, primaryKey);
     for(int primaryIndex = 0; primaryIndex < primaryAxis.GetNumSamples(); primaryIndex++)
     {
-      while(primaryAxis.CoordinateToSampleIndex(float(segmentInfoIterator->m_primaryKey)) == primaryIndex)
+      while(segmentInfoIterator != sortedSegmentInfo.end() && primaryAxis.CoordinateToSampleIndex(float(segmentInfoIterator->m_primaryKey)) == primaryIndex)
       {
         currentStartStopIndices = combineStartStopIndices(currentStartStopIndices, getSegmentStartStopIndex(*segmentInfoIterator, primaryAxis, primaryKey));
         segmentInfoIterator = std::next(segmentInfoIterator);
@@ -2305,6 +2318,7 @@ int64_t calculateActiveTraceCount(const SEGYFileInfo& fileInfo, const std::vecto
       while(primaryAxis.CoordinateToSampleIndex(float(segmentInfoIterator->m_primaryKey)) == primaryIndex)
       {
         currentStartStopIndices = combineStartStopIndices(currentStartStopIndices, getSegmentStartStopIndex(*segmentInfoIterator, primaryAxis, primaryKey));
+        if(segmentInfoIterator == sortedSegmentInfo.begin()) break;
         segmentInfoIterator = std::prev(segmentInfoIterator);
       }
       int activeStart = std::max(secondaryStartStop[primaryIndex].first,  currentStartStopIndices.first);
@@ -4668,7 +4682,20 @@ main(int argc, char* argv[])
               if (currentLowerSegmentIndex > previousLowerSegmentIndex)
               {
                 // we've progressed to a new set of primary keys; remove earlier pages from the cache
-                traceDataManagers[chunkFileIndex].retirePagesBefore(fileInfo.m_segmentInfoLists[chunkFileIndex][currentLowerSegmentIndex].m_traceStart);
+                if (fileInfo.IsOffsetSorted())
+                {
+                  // Indices are per-offset; only retire when both chunks are on the same offset
+                  if (chunkInfo.min[1] == previousChunkInfo.min[1])
+                  {
+                    const int offsetValue = gatherOffsetValues[chunkInfo.min[1]];
+                    const auto& offsetSegList = fileInfo.m_segmentInfoListsByOffset[chunkFileIndex].at(offsetValue);
+                    traceDataManagers[chunkFileIndex].retirePagesBefore(offsetSegList[currentLowerSegmentIndex].m_traceStart);
+                  }
+                }
+                else
+                {
+                  traceDataManagers[chunkFileIndex].retirePagesBefore(fileInfo.m_segmentInfoLists[chunkFileIndex][currentLowerSegmentIndex].m_traceStart);
+                }
               }
             }
             else
