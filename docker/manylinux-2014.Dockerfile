@@ -12,11 +12,14 @@ COPY python/requirements-dev-with-docs.txt /tmp/requirements-dev.txt
 # Install the dev dependencies into each targeted CPython the image actually ships.
 # manylinux drops EOL interpreters, so skip any that are absent rather than
 # hardcoding paths that break when the base image updates.
+# numpy is capped below 2.5: newer numpy no longer publishes manylinux2014 wheels
+# and its source build requires GCC >= 10.3, while this image ships GCC 10.2.1
+# (devtoolset-10), so pip would fail building it for cp312/cp313.
 RUN set -eu; for v in cp38 cp39 cp310 cp311 cp312 cp313; do \
       py="/opt/python/$v-$v/bin/python"; \
       if [ -x "$py" ]; then \
         echo "=== installing dev requirements for $v ==="; \
-        "$py" -m pip install -r /tmp/requirements-dev.txt; \
+        "$py" -m pip install -r /tmp/requirements-dev.txt "numpy<2.5"; \
       else \
         echo "=== $v not present in image, skipping ==="; \
       fi; \
