@@ -49,11 +49,11 @@ std::string convertToISO8601(const std::string& value)
     return ss.str();
 }
 
-SocketContext::SocketContext(CurlEasyHandler* request, curl_socket_t socket)
-  : curlMulti(request->eventLoopData->curlMulti)
+SocketContext::SocketContext(UVEventLoopData* eventLoopData, curl_socket_t socket)
+  : curlMulti(eventLoopData->curlMulti)
   , socket(socket)
 {
-  uv_poll_init_socket(request->eventLoopData->loop, &pollHandle, socket);
+  uv_poll_init_socket(eventLoopData->loop, &pollHandle, socket);
   pollHandle.data = this;
 }
 
@@ -603,12 +603,16 @@ static void curlPollCB(uv_poll_t* handle, int status, int events)
   curl_multi_socket_action(socketContext->curlMulti, socketContext->socket, flags, &running_handles);
 }
 
-static int curlSocketCB(CURL *easy, curl_socket_t s, int what, void *userp, void *socketp)
+int curlSocketCB(CURL *easy, curl_socket_t s, int what, void *userp, void *socketp)
 {
-  CurlEasyHandler *curlRequest;
-  curl_easy_getinfo(easy, CURLINFO_PRIVATE, &curlRequest);
+  // Since curl 8.10.0 this callback can fire for easy handles created
+  // internally by libcurl (connection eyeballing/shutdown) whose
+  // CURLINFO_PRIVATE is null, so only the multi-level CURLMOPT_SOCKETDATA
+  // (userp) may be used here. Their sockets must still be polled or the
+  // transfers they drive stall.
+  UVEventLoopData *eventLoopData = static_cast<UVEventLoopData *>(userp);
   int events = 0;
-
+  
   SocketContext *socketContext = static_cast<SocketContext *>(socketp);
 
   switch (what)
@@ -623,13 +627,13 @@ static int curlSocketCB(CURL *easy, curl_socket_t s, int what, void *userp, void
 
     if (!socketp)
     {
-      socketContext = new SocketContext(curlRequest, s);
-      curl_multi_assign(curlRequest->eventLoopData->curlMulti, s, socketContext);
+      socketContext = new SocketContext(eventLoopData, s);
+      curl_multi_assign(eventLoopData->curlMulti, s, socketContext);
     }
     uv_poll_start(&socketContext->pollHandle, events, curlPollCB);
     break;
   case CURL_POLL_REMOVE:
-    curl_multi_assign(curlRequest->eventLoopData->curlMulti, s, nullptr);
+    curl_multi_assign(eventLoopData->curlMulti, s, nullptr);
     socketContext->curlMulti = nullptr;
     uv_poll_stop(&socketContext->pollHandle);
     uv_close((uv_handle_t*)&socketContext->pollHandle, socketContextCloseCB);

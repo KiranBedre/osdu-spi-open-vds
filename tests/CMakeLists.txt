@@ -62,12 +62,21 @@ function(add_test_executable name)
 endfunction()
 
 if (NOT ENABLE_ASAN)
-  add_test_executable(io_tests
+  set(io_tests_sources
     io/filetest.cpp
     io/InMemoryIo.cpp
     io/IoManagerBasic.cpp
     io/sdpath.cpp
     )
+  # CurlSocketCallbackTest needs IOManagerCurl.cpp which is only compiled when
+  # at least one curl-based IOManager is enabled
+  if (NOT (DISABLE_CURL_IOMANAGER AND DISABLE_AWS_IOMANAGER AND DISABLE_AZURE_PRESIGNED_IOMANAGER AND DISABLE_GCP_IOMANAGER AND DISABLE_DMS_IOMANAGER))
+    list(APPEND io_tests_sources io/CurlSocketCallbackTest.cpp)
+  endif()
+  add_test_executable(io_tests ${io_tests_sources})
+  if (BUILD_CURL)
+    target_compile_definitions(io_tests PRIVATE CURL_STATICLIB=1)
+  endif()
 
   add_test_executable(io_performance_test
     io/IoPerformance.cpp

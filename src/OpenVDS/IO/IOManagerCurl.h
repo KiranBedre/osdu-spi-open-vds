@@ -77,12 +77,15 @@ struct CurlEasyHandler
 
 struct SocketContext
 {
-  SocketContext(CurlEasyHandler *request, curl_socket_t socket);
+  SocketContext(UVEventLoopData *eventLoopData, curl_socket_t socket);
 
   CURLM *curlMulti;
   curl_socket_t socket;
   uv_poll_t pollHandle;
 };
+
+// CURLMOPT_SOCKETFUNCTION callback, exposed for testing
+int curlSocketCB(CURL *easy, curl_socket_t s, int what, void *userp, void *socketp);
 
 struct CurlDownloadHandler;
 class DownloadRequestCurl : public RequestImpl
