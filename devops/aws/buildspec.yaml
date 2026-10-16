@@ -1,0 +1,74 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html
+# https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-env-vars.html
+version: 0.2
+
+env:
+  secrets-manager:
+    DOCKER_USERNAME: /osdu/devops/docker_credentials:username
+    DOCKER_PASSWORD: /osdu/devops/docker_credentials:password
+
+phases:
+  install:
+    commands:
+      - apt-get update -y
+      - export AWS_ACCOUNT_ID=`aws sts get-caller-identity | grep Account | cut -d':' -f 2 | cut -d'"' -f 2`
+      # Install git secrets
+      # TODO: temporarily adding hotfix, due to https://github.com/awslabs/git-secrets/issues/220
+      - export SAY_LOCATION=`ln -s "$(which echo)" say`
+      - export PATH="$PATH:$SAY_LOCATION"
+      - git clone https://github.com/awslabs/git-secrets.git
+      - cd git-secrets && make install && cd ..
+      - git secrets --install && git secrets --register-aws
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY} # authenticate with ECR via the AWS CLI
+  build:
+    commands:
+      - export OUTPUT_DIR="dist"
+      - export BRANCH_NAME=`echo ${BRANCH_NAME} | awk '{gsub("refs/heads/","");gsub("\\.","-");gsub("[[:space:]]","-")}1' | sed 's/\//-/g' | awk '{print tolower($0)}'`
+      # Every release, Image is manually uploaded to AWS devops3 account os-open-vds ECR repo from community.opengroup.org:5555/osdu/platform/domain-data-mgmt-services/seismic/open-vds/openvds-ingestion:<tag>
+      # Check https://community.opengroup.org/osdu/platform/domain-data-mgmt-services/seismic/open-vds/-/releases for release tag
+      - export ECR_TAG=3.4.9
+      - echo "Skipping docker image build. Using preset image tag $ECR_TAG..."
+      - export ECR_IMAGE=${ECR_REGISTRY}:${ECR_TAG}
+      - printenv
+
+      - mkdir -p ${OUTPUT_DIR}
+      - echo "Placeholder" >> ${OUTPUT_DIR}/build-info.json # touched so that the output directory has some content incase the build fails so that testing reports are uploaded
+
+      - GIT_SECRETS_SCAN_RESULT=$(git secrets --scan 2> ${OUTPUT_DIR}/git_secrets.out.txt && echo OK || echo FAILED)
+      - if [ "$GIT_SECRETS_SCAN_RESULT" = "FAILED" ]; then echo "Secrets detected!" && exit 1; fi
+
+      - echo "Generate build-info.json"
+      - |
+        python devops/aws/build-info.py \
+        --branch ${BRANCH_NAME} \
+        --commitId ${COMMIT_ID} \
+        --commitMessage "\"${COMMIT_MESSAGE}\"" \
+        --commitAuthor "\"${COMMIT_AUTHOR}\"" \
+        --commitDate "\"${COMMIT_DATE}\"" \
+        --buildid ${CODEBUILD_BUILD_ID} \
+        --buildnumber ${CODEBUILD_BUILD_NUMBER} \
+        --reponame ${REPO_NAME} \
+        --outdir ${OUTPUT_DIR} \
+        --artifact ${ECR_IMAGE}
+artifacts:
+  files:
+    - '**/*'
+  base-directory: 'dist'
+  name: ${BRANCH_NAME}/${PACKAGE_NAME}.zip

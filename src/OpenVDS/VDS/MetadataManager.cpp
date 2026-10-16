@@ -1,0 +1,365 @@
+/****************************************************************************
+** Copyright 2019 The Open Group
+** Copyright 2019 Bluware, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+****************************************************************************/
+
+#include "MetadataManager.h"
+
+#include <IO/IOManager.h>
+#include "VolumeDataStoreIOManager.h"
+#include "WaveletTypes.h"
+#include <assert.h>
+#include <algorithm>
+#include <fmt/format.h>
+
+namespace OpenVDS
+{
+
+class MetadataPageTransfer : public TransferDownloadHandler
+{
+public:
+MetadataPageTransfer(MetadataManager *manager, VolumeDataStoreIOManager *volumeDataStore, MetadataPage *metadataPage)
+  : manager(manager)
+  , volumeDataStore(volumeDataStore)
+  , metadataPage(metadataPage)
+{ }
+
+void HandleObjectSize(int64_t size) override {}
+void HandleObjectLastWriteTime(const std::string &lastWriteTimeISO8601) override {}
+void HandleMetadata(const std::string &key, const std::string &header) override {};
+void HandleData(std::vector<uint8_t> &&data) override
+{
+  metadata = std::move(data);
+}
+
+void Completed(const Request &request, const Error &e) override
+{
+  Error error = e;
+  if (error.code == 0 && metadata.empty())
+  {
+    error.code = -1;
+    error.string = "Empty medata page data downloaded";
+  }
+
+  if(error.code == 0)
+  {
+    manager->PageTransferCompleted(volumeDataStore, metadataPage, std::move(metadata));
+  }
+  else
+  {
+    manager->PageTransferError(volumeDataStore, metadataPage, error);
+  }
+}
+
+MetadataManager *manager;
+VolumeDataStoreIOManager *volumeDataStore;
+MetadataPage *metadataPage;
+std::vector<uint8_t> metadata;
+};
+
+MetadataManager::MetadataManager(IOManager *iomanager, std::string const &layerUrl, std::string const &channelName, MetadataStatus const &metadataStatus, int pageLimit, bool createEmptyPages)
+  : m_iomanager(iomanager)
+  , m_layerUrl(layerUrl)
+  , m_channelName(channelName)
+  , m_metadataStatus(metadataStatus)
+  , m_pageLimit(pageLimit)
+  , m_createEmptyPages(createEmptyPages)
+  , m_dirty(createEmptyPages)
+  , m_lockedPageCount(0)
+  , m_isFlushInProgress(false)
+{
+}
+
+MetadataManager::~MetadataManager()
+{
+}
+
+void MetadataManager::LimitPages()
+{
+  assert(m_pageMap.size() == m_pageList.size() + m_dirtyPageList.size());
+
+  while (int(m_pageList.size()) > m_pageLimit && m_pageList.back().m_lockCount == 0)
+  {
+    m_pageMap.erase(m_pageList.back().m_pageIndex);
+    m_pageList.pop_back();
+  }
+
+  assert(m_pageMap.size() == m_pageList.size() + m_dirtyPageList.size());
+}
+
+MetadataPage*
+MetadataManager::LockPage(int pageIndex, bool* initiateTransfer)
+{
+  assert(initiateTransfer);
+
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  if (m_isFlushInProgress)
+  {
+    m_flushFinishedCondition.wait(lock, [this] { return !this->m_isFlushInProgress; });
+  }
+
+  assert(m_pageMap.size() == m_pageList.size() + m_dirtyPageList.size());
+
+  MetadataPageMap::iterator mi = m_pageMap.find(pageIndex);
+
+  if (mi != m_pageMap.end())
+  {
+    // Move page to front of list
+    if (!mi->second->IsDirty())
+    {
+      m_pageList.splice(m_pageList.begin(), m_pageList, mi->second);
+    }
+
+    *initiateTransfer = false;
+  }
+  else
+  {
+    // Create page in front of list
+    m_pageList.emplace_front(this, pageIndex);
+    mi = m_pageMap.insert(MetadataPageMap::value_type(pageIndex, m_pageList.begin())).first;
+
+    if(m_createEmptyPages || (!m_metadataStatus.m_pageDirectory.empty() && m_metadataStatus.m_pageDirectory[pageIndex] == -1))
+    {
+      m_pageList.begin()->m_data.resize(m_metadataStatus.m_chunkMetadataByteSize * m_metadataStatus.m_chunkMetadataPageSize);
+      m_pageList.begin()->m_valid = true;
+      *initiateTransfer = false;
+    }
+    else
+    {
+      *initiateTransfer = true;
+    }
+  }
+
+  MetadataPage &page = *mi->second;
+  if(page.m_lockCount == 0)
+  {
+    m_lockedPageCount++;
+  }
+  page.m_lockCount++;
+
+  LimitPages();
+
+  assert(m_pageMap.size() == m_pageList.size() + m_dirtyPageList.size());
+  assert(m_pageMap.find(pageIndex) != m_pageMap.end());
+  assert(m_pageMap[pageIndex]->m_lockCount > 0);
+
+  return &page;
+}
+
+void MetadataManager::InitiateTransfer(VolumeDataStoreIOManager *volumeDataStore, MetadataPage* page, std::string const& url)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  assert(!page->m_valid && !page->m_activeTransfer);
+
+  page->m_activeTransfer = m_iomanager->ReadObject(url, std::make_shared<MetadataPageTransfer>(this, volumeDataStore, page));
+}
+
+void MetadataManager::CompleteTransfer(MetadataPage* page)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  if(page->m_valid) return;
+
+  if(page->m_activeTransfer)
+  {
+    Error error;
+    auto activeTransfer = page->m_activeTransfer;
+    lock.unlock();
+    activeTransfer->WaitForFinish(error);
+    lock.lock();
+  }
+}
+
+bool MetadataManager::UploadDirtyPages(VolumeDataStoreIOManager *volumeDataStore, Error &error)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  if (m_isFlushInProgress)
+  {
+    m_flushFinishedCondition.wait(lock, [this] { return !this->m_isFlushInProgress; });
+  }
+
+  m_isFlushInProgress = true;
+
+  if (m_lockedPageCount > 0)
+  {
+    m_noLockedPageCondition.wait(lock, [this] { return this->m_lockedPageCount == 0; });
+  }
+
+  bool layerStatusNeedsFlush = m_dirty;
+  for(MetadataPageList::iterator it = m_dirtyPageList.begin(), next; it != m_dirtyPageList.end(); it = next)
+  {
+    auto &page = *it;
+    assert(page.IsDirty());
+    // We need to keep a separate 'next' iterator since we're moving the current element to another list if the write is successful
+    next = std::next(it);
+
+    bool success = volumeDataStore->WriteMetadataPage(&page, page.m_data, error);
+    if(success)
+    {
+      assert(page.m_pageIndex < int(m_metadataStatus.m_pageDirectory.size()));
+      m_metadataStatus.m_pageDirectory[page.m_pageIndex] = page.m_pageIndex;
+      page.m_dirty = false;
+      m_pageList.splice(m_pageList.begin(), m_dirtyPageList, it);
+      layerStatusNeedsFlush = true;
+    }
+    else
+    {
+      m_dirtyPageList.splice(m_dirtyPageList.end(), m_dirtyPageList, it);
+      m_isFlushInProgress = false;
+      m_flushFinishedCondition.notify_all();
+      return layerStatusNeedsFlush;
+    }
+  }
+
+  m_isFlushInProgress = false;
+  m_flushFinishedCondition.notify_all();
+  return layerStatusNeedsFlush;
+}
+
+void MetadataManager::PageTransferError(VolumeDataStoreIOManager* volumeDataStore, MetadataPage* page, const Error &error)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+  page->m_valid = false;
+  page->m_transferError = error;
+  lock.unlock();
+  volumeDataStore->PageTransferCompleted(page, error);
+}
+
+void MetadataManager::PageTransferCompleted(VolumeDataStoreIOManager* volumeDataStore, MetadataPage* page, std::vector<uint8_t> &&data)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+  page->m_data = std::move(data);
+  page->m_valid = true;
+  lock.unlock();
+
+  Error error;
+  volumeDataStore->PageTransferCompleted(page, error);
+}
+
+uint8_t const *MetadataManager::GetPageEntry(MetadataPage *page, int entryIndex) const
+{
+  assert(page->IsValid());
+
+  return &page->m_data[entryIndex * m_metadataStatus.m_chunkMetadataByteSize];
+}
+
+void MetadataManager::SetPageEntry(MetadataPage *page, int entryIndex, uint8_t const *metadata, int metadataLength, uint8_t *oldMetadata)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  assert(page->IsValid());
+  assert(metadataLength == m_metadataStatus.m_chunkMetadataByteSize);
+
+  if(!page->m_dirty)
+  {
+    page->m_dirty = true;
+
+    MetadataPageMap::iterator pageMapIterator = m_pageMap.find(page->m_pageIndex);
+
+    m_dirtyPageList.splice(m_dirtyPageList.end(), m_pageList, pageMapIterator->second);
+  }
+  if(oldMetadata)
+  {
+    memcpy(oldMetadata, &page->m_data[entryIndex * m_metadataStatus.m_chunkMetadataByteSize], metadataLength);
+  }
+  //std::copy(metadata, metadata + metadataLength, &page->m_data[entryIndex * m_metadataStatus.m_chunkMetadataByteSize]);
+  memcpy(&page->m_data[entryIndex * m_metadataStatus.m_chunkMetadataByteSize], metadata, metadataLength);
+}
+
+void MetadataManager::UnlockPage(MetadataPage *page)
+{
+  assert(page);
+  assert(page->m_lockCount > 0);
+
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  assert(m_pageMap.size() == m_pageList.size() + m_dirtyPageList.size());
+  assert(m_pageMap.find(page->m_pageIndex) != m_pageMap.end());
+
+  page->m_lockCount--;
+
+  if (page->m_lockCount == 0)
+  {
+    m_lockedPageCount--;
+    if (m_lockedPageCount == 0)
+    {
+      m_noLockedPageCondition.notify_all();
+    }
+  }
+
+  if(page->m_lockCount == 0 && !page->m_valid)
+  {
+    if(page->m_activeTransfer)
+    {
+      page->m_activeTransfer->Cancel();
+      page->m_activeTransfer = nullptr;
+    }
+
+    MetadataPageMap::iterator pageMapIterator = m_pageMap.find(page->m_pageIndex);
+
+    MetadataPageList::iterator pageListIterator = pageMapIterator->second;
+
+    m_pageMap.erase(pageMapIterator);
+    m_pageList.erase(pageListIterator);
+  }
+
+  LimitPages();
+}
+
+void MetadataManager::UpdateMetadataStatus(int64_t uncompressedSize, int serializedSize, bool subtract, const uint8_t (*targetLevels)[WAVELET_ADAPTIVE_LEVELS])
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  if(subtract)
+  {
+    if(m_metadataStatus.m_hasValidChunkCount)
+    {
+      m_metadataStatus.m_validChunkCount -= 1;
+    }
+    if(m_metadataStatus.m_hasSerializedSize)
+    {
+      m_metadataStatus.m_serializedSize -= serializedSize;
+    }
+    m_metadataStatus.m_uncompressedSize -= uncompressedSize;
+  }
+  else
+  {
+    if(m_metadataStatus.m_hasValidChunkCount)
+    {
+      m_metadataStatus.m_validChunkCount += 1;
+    }
+    if(m_metadataStatus.m_hasSerializedSize)
+    {
+      m_metadataStatus.m_serializedSize += serializedSize;
+    }
+    m_metadataStatus.m_uncompressedSize += uncompressedSize;
+  }
+
+  if(targetLevels)
+  {
+    Wavelet::Wavelet_AccumulateAdaptiveLevelSizes(serializedSize, m_metadataStatus.m_adaptiveLevelSizes, subtract, *targetLevels);
+  }
+}
+
+void MetadataManager::MakeDirty(bool dirty)
+{
+  std::unique_lock<std::mutex> lock(m_mutex);
+  m_dirty = dirty;
+}
+
+}

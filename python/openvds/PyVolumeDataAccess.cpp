@@ -1,0 +1,355 @@
+/****************************************************************************
+** Copyright 2019 The Open Group
+** Copyright 2019 Bluware, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+****************************************************************************/
+
+#include "PyVolumeDataAccess.h"
+
+using namespace native;
+
+template<typename T, size_t N> inline T (&PODArrayReference(std::array<T,N> &a))[N] { return *reinterpret_cast<T (*)[N]>(a.data()); }
+
+static uint32_t GetItemSize(VolumeDataFormat format, VolumeDataComponents components)
+{
+  switch(format)
+  {
+  default:
+    throw std::runtime_error("Illegal format");
+  case VolumeDataFormat::Format_1Bit:
+    return 1;
+  case VolumeDataFormat::Format_U8:
+    return 1 * components;
+  case VolumeDataFormat::Format_U16:
+    return 2 * components;
+  case VolumeDataFormat::Format_R32:
+  case VolumeDataFormat::Format_U32:
+    return 4 * components;
+  case VolumeDataFormat::Format_U64:
+  case VolumeDataFormat::Format_R64:
+    return 8 * components;
+  }
+}
+
+static const char *
+GetPythonFormatString(VolumeDataFormat format, VolumeDataComponents components)
+{
+  switch(format)
+  {
+  default:
+    throw std::runtime_error("Unknown format");
+  case VolumeDataFormat::Format_1Bit:
+    // Fall through
+  case VolumeDataFormat::Format_U8:
+    return &"BBBB"[4 - components];
+  case VolumeDataFormat::Format_U16:
+    return &"HHHH"[4 - components];
+  case VolumeDataFormat::Format_R32:
+    return &"ffff"[4 - components];
+  case VolumeDataFormat::Format_U32:
+    return &"IIII"[4 - components];
+  case VolumeDataFormat::Format_R64:
+    return &"dddd"[4 - components];
+  case VolumeDataFormat::Format_U64:
+    return &"QQQQ"[4 - components];
+  }
+}
+
+template<typename INDEX_TYPE, typename T>
+static void
+RegisterVolumeDataReadAccessor(py::module& m, const char* name)
+{
+  typedef VolumeDataReadAccessor<INDEX_TYPE, T>           AccessorType;
+  typedef std::tuple<INDEX_TYPE, INDEX_TYPE>  IndexRegionType;
+
+  py::class_<AccessorType, std::unique_ptr<AccessorType, py::nodelete>> 
+    VolumeDataAccessor_(m, name, "A class that provides random read access to the voxel values of a VDS");
+
+  VolumeDataAccessor_.def_property_readonly("regionCount", &AccessorType::RegionCount);
+  VolumeDataAccessor_.def("region", [](AccessorType* self, int64_t region)
+    {
+      auto r = self->Region(region);
+      IndexRegionType result = std::make_tuple(r.Min, r.Max);
+      return result;
+    }, OPENVDS_DOCSTRING(IVolumeDataRegions_Region)
+  );
+  VolumeDataAccessor_.def("regionFromIndex", [](AccessorType* self, INDEX_TYPE index)
+    {
+      return self->RegionFromIndex(index);
+    }, OPENVDS_DOCSTRING(IVolumeDataRegions_RegionFromIndex)
+  );
+
+  VolumeDataAccessor_.def("getValue", [](AccessorType* self, INDEX_TYPE index)
+    {
+      return self->GetValue(index);
+    }
+  );
+}
+
+template<typename INDEX_TYPE, typename T>
+static void
+RegisterVolumeDataReadWriteAccessor(py::module& m, const char* name)
+{
+  typedef VolumeDataReadWriteAccessor<INDEX_TYPE, T> AccessorType;
+  typedef VolumeDataReadAccessor<INDEX_TYPE, T>      BaseType;
+
+  py::class_<AccessorType, BaseType, std::unique_ptr<AccessorType, py::nodelete>> 
+    VolumeDataAccessor_(m, name, "A class that provides random read/write access to the voxel values of a VDS");
+
+  VolumeDataAccessor_.def("setValue", [](AccessorType* self, INDEX_TYPE index, T value)
+    {
+      self->SetValue(index, value);
+    });
+  VolumeDataAccessor_.def("commit", &AccessorType::Commit);
+  VolumeDataAccessor_.def("cancel", &AccessorType::Cancel);
+}
+
+void 
+PyVolumeDataAccess::initModule(py::module& m)
+{
+//AUTOGEN-BEGIN
+  py::enum_<VDSProduceStatus> 
+    VDSProduceStatus_(m,"VDSProduceStatus", OPENVDS_DOCSTRING(VDSProduceStatus));
+
+  VDSProduceStatus_.value("Normal"                      , VDSProduceStatus::Normal                , OPENVDS_DOCSTRING(VDSProduceStatus_Normal));
+  VDSProduceStatus_.value("Remapped"                    , VDSProduceStatus::Remapped              , OPENVDS_DOCSTRING(VDSProduceStatus_Remapped));
+  VDSProduceStatus_.value("Unavailable"                 , VDSProduceStatus::Unavailable           , OPENVDS_DOCSTRING(VDSProduceStatus_Unavailable));
+
+  // IVolumeDataAccessor
+  py::class_<IVolumeDataAccessor, std::unique_ptr<IVolumeDataAccessor, py::nodelete>> 
+    IVolumeDataAccessor_(m,"IVolumeDataAccessor", OPENVDS_DOCSTRING(IVolumeDataAccessor));
+
+  IVolumeDataAccessor_.def("getManager"                  , static_cast<native::IVolumeDataAccessor::Manager &(IVolumeDataAccessor::*)()>(&IVolumeDataAccessor::GetManager), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(IVolumeDataAccessor_GetManager));
+  IVolumeDataAccessor_.def_property_readonly("manager", &IVolumeDataAccessor::GetManager, OPENVDS_DOCSTRING(IVolumeDataAccessor_GetManager));
+  IVolumeDataAccessor_.def("getLayout"                   , static_cast<const native::VolumeDataLayout *(IVolumeDataAccessor::*)()>(&IVolumeDataAccessor::GetLayout), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(IVolumeDataAccessor_GetLayout));
+  IVolumeDataAccessor_.def_property_readonly("layout", &IVolumeDataAccessor::GetLayout, OPENVDS_DOCSTRING(IVolumeDataAccessor_GetLayout));
+
+  // IVolumeDataAccessor::Manager
+  py::class_<IVolumeDataAccessor::Manager, std::unique_ptr<IVolumeDataAccessor::Manager, py::nodelete>> 
+    IVolumeDataAccessor_Manager_(IVolumeDataAccessor_,"IVolumeDataAccessor::Manager", OPENVDS_DOCSTRING(IVolumeDataAccessor_Manager));
+
+  IVolumeDataAccessor_Manager_.def("destroyVolumeDataAccessor"   , static_cast<void(IVolumeDataAccessor::Manager::*)(native::IVolumeDataAccessor *)>(&IVolumeDataAccessor::Manager::DestroyVolumeDataAccessor), py::arg("accessor").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(IVolumeDataAccessor_Manager_DestroyVolumeDataAccessor));
+  IVolumeDataAccessor_Manager_.def("cloneVolumeDataAccessor"     , static_cast<native::IVolumeDataAccessor *(IVolumeDataAccessor::Manager::*)(const native::IVolumeDataAccessor &)>(&IVolumeDataAccessor::Manager::CloneVolumeDataAccessor), py::arg("accessor").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(IVolumeDataAccessor_Manager_CloneVolumeDataAccessor));
+
+  // VolumeDataPage
+  py::class_<VolumeDataPage, std::unique_ptr<VolumeDataPage, py::nodelete>> 
+    VolumeDataPage_(m,"VolumeDataPage", OPENVDS_DOCSTRING(VolumeDataPage));
+
+  VolumeDataPage_.def("getVolumeDataPageAccessor"   , static_cast<native::VolumeDataPageAccessor &(VolumeDataPage::*)() const>(&VolumeDataPage::GetVolumeDataPageAccessor), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetVolumeDataPageAccessor));
+  VolumeDataPage_.def_property_readonly("volumeDataPageAccessor", &VolumeDataPage::GetVolumeDataPageAccessor, OPENVDS_DOCSTRING(VolumeDataPage_GetVolumeDataPageAccessor));
+  VolumeDataPage_.def("getMinMax"                   , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& min, py::array_t<int,py::array::c_style>& max) { return self->GetMinMax(PyArrayAdapter<int, 6, true>::getArrayChecked(min), PyArrayAdapter<int, 6, true>::getArrayChecked(max)); }, py::arg("min").none(false), py::arg("max").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetMinMax));
+  VolumeDataPage_.def("getMinMaxExcludingMargin"    , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& minExcludingMargin, py::array_t<int,py::array::c_style>& maxExcludingMargin) { return self->GetMinMaxExcludingMargin(PyArrayAdapter<int, 6, true>::getArrayChecked(minExcludingMargin), PyArrayAdapter<int, 6, true>::getArrayChecked(maxExcludingMargin)); }, py::arg("minExcludingMargin").none(false), py::arg("maxExcludingMargin").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetMinMaxExcludingMargin));
+  VolumeDataPage_.def("getError"                    , static_cast<native::ReadErrorException(VolumeDataPage::*)() const>(&VolumeDataPage::GetError), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetError));
+  VolumeDataPage_.def_property_readonly("error", &VolumeDataPage::GetError, OPENVDS_DOCSTRING(VolumeDataPage_GetError));
+  VolumeDataPage_.def("updateWrittenRegion"         , [](VolumeDataPage* self, const py::array_t<int,py::array::forcecast>& writtenMin, const py::array_t<int,py::array::forcecast>& writtenMax) { return self->UpdateWrittenRegion(PyArrayAdapter<int, 6, false>::getArrayChecked(writtenMin), PyArrayAdapter<int, 6, false>::getArrayChecked(writtenMax)); }, py::arg("writtenMin").none(false), py::arg("writtenMax").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_UpdateWrittenRegion));
+  VolumeDataPage_.def("release"                     , static_cast<void(VolumeDataPage::*)()>(&VolumeDataPage::Release), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_Release));
+
+  // VolumeDataPageAccessor
+  py::class_<VolumeDataPageAccessor, SharedPtrNoDeleteWrapper<VolumeDataPageAccessor>> 
+    VolumeDataPageAccessor_(m,"VolumeDataPageAccessor", OPENVDS_DOCSTRING(VolumeDataPageAccessor));
+
+  VolumeDataPageAccessor_.def("getLayout"                   , static_cast<const native::VolumeDataLayout *(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetLayout), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetLayout));
+  VolumeDataPageAccessor_.def_property_readonly("layout", &VolumeDataPageAccessor::GetLayout, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetLayout));
+  VolumeDataPageAccessor_.def("getLOD"                      , static_cast<int(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetLOD), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetLOD));
+  VolumeDataPageAccessor_.def_property_readonly("LOD", &VolumeDataPageAccessor::GetLOD, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetLOD));
+  VolumeDataPageAccessor_.def("getChannelIndex"             , static_cast<int(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetChannelIndex), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChannelIndex));
+  VolumeDataPageAccessor_.def_property_readonly("channelIndex", &VolumeDataPageAccessor::GetChannelIndex, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChannelIndex));
+  VolumeDataPageAccessor_.def("getChannelDescriptor"        , static_cast<native::VolumeDataChannelDescriptor(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetChannelDescriptor), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChannelDescriptor));
+  VolumeDataPageAccessor_.def_property_readonly("channelDescriptor", &VolumeDataPageAccessor::GetChannelDescriptor, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChannelDescriptor));
+  VolumeDataPageAccessor_.def("getNumSamples"               , [](VolumeDataPageAccessor* self, py::array_t<int,py::array::c_style>& numSamples) { return self->GetNumSamples(PyArrayAdapter<int, 6, true>::getArrayChecked(numSamples)); }, py::arg("numSamples").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetNumSamples));
+  VolumeDataPageAccessor_.def("getChunkCount"               , static_cast<int64_t(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetChunkCount), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkCount));
+  VolumeDataPageAccessor_.def_property_readonly("chunkCount", &VolumeDataPageAccessor::GetChunkCount, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkCount));
+  VolumeDataPageAccessor_.def("getChunkMinMax"              , [](VolumeDataPageAccessor* self, int64_t chunk, py::array_t<int,py::array::c_style>& min, py::array_t<int,py::array::c_style>& max) { return self->GetChunkMinMax(chunk, PyArrayAdapter<int, 6, true>::getArrayChecked(min), PyArrayAdapter<int, 6, true>::getArrayChecked(max)); }, py::arg("chunk").none(false), py::arg("min").none(false), py::arg("max").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkMinMax));
+  VolumeDataPageAccessor_.def("getChunkMinMaxExcludingMargin", [](VolumeDataPageAccessor* self, int64_t chunk, py::array_t<int,py::array::c_style>& minExcludingMargin, py::array_t<int,py::array::c_style>& maxExcludingMargin) { return self->GetChunkMinMaxExcludingMargin(chunk, PyArrayAdapter<int, 6, true>::getArrayChecked(minExcludingMargin), PyArrayAdapter<int, 6, true>::getArrayChecked(maxExcludingMargin)); }, py::arg("chunk").none(false), py::arg("minExcludingMargin").none(false), py::arg("maxExcludingMargin").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkMinMaxExcludingMargin));
+  VolumeDataPageAccessor_.def("getChunkVolumeDataHash"      , static_cast<uint64_t(VolumeDataPageAccessor::*)(int64_t) const>(&VolumeDataPageAccessor::GetChunkVolumeDataHash), py::arg("chunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkVolumeDataHash));
+  VolumeDataPageAccessor_.def("getChunkIndex"               , [](VolumeDataPageAccessor* self, const py::array_t<int,py::array::forcecast>& position) { return self->GetChunkIndex(PyArrayAdapter<int, 6, false>::getArrayChecked(position)); }, py::arg("position").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkIndex));
+  VolumeDataPageAccessor_.def("getMappedChunkIndex"         , static_cast<int64_t(VolumeDataPageAccessor::*)(int64_t) const>(&VolumeDataPageAccessor::GetMappedChunkIndex), py::arg("primaryChannelChunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetMappedChunkIndex));
+  VolumeDataPageAccessor_.def("getPrimaryChannelChunkIndex" , static_cast<int64_t(VolumeDataPageAccessor::*)(int64_t) const>(&VolumeDataPageAccessor::GetPrimaryChannelChunkIndex), py::arg("chunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetPrimaryChannelChunkIndex));
+  VolumeDataPageAccessor_.def("getSuperChunkCount"          , static_cast<int64_t(VolumeDataPageAccessor::*)() const>(&VolumeDataPageAccessor::GetSuperChunkCount), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetSuperChunkCount));
+  VolumeDataPageAccessor_.def_property_readonly("superChunkCount", &VolumeDataPageAccessor::GetSuperChunkCount, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetSuperChunkCount));
+  VolumeDataPageAccessor_.def("getChunkIndicesInSuperChunk" , static_cast<std::vector<int64_t>(VolumeDataPageAccessor::*)(int64_t) const>(&VolumeDataPageAccessor::GetChunkIndicesInSuperChunk), py::arg("superChunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkIndicesInSuperChunk));
+  VolumeDataPageAccessor_.def("addReference"                , static_cast<int(VolumeDataPageAccessor::*)()>(&VolumeDataPageAccessor::AddReference), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_AddReference));
+  VolumeDataPageAccessor_.def("removeReference"             , static_cast<int(VolumeDataPageAccessor::*)()>(&VolumeDataPageAccessor::RemoveReference), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_RemoveReference));
+  VolumeDataPageAccessor_.def("getMaxPages"                 , static_cast<int(VolumeDataPageAccessor::*)()>(&VolumeDataPageAccessor::GetMaxPages), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetMaxPages));
+  VolumeDataPageAccessor_.def_property_readonly("maxPages", &VolumeDataPageAccessor::GetMaxPages, OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetMaxPages));
+  VolumeDataPageAccessor_.def("setMaxPages"                 , static_cast<void(VolumeDataPageAccessor::*)(int)>(&VolumeDataPageAccessor::SetMaxPages), py::arg("maxPages").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_SetMaxPages));
+  VolumeDataPageAccessor_.def("createPage"                  , static_cast<native::VolumeDataPage *(VolumeDataPageAccessor::*)(int64_t)>(&VolumeDataPageAccessor::CreatePage), py::arg("chunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_CreatePage));
+  VolumeDataPageAccessor_.def("copyPage"                    , static_cast<void(VolumeDataPageAccessor::*)(int64_t, const native::VolumeDataPageAccessor &)>(&VolumeDataPageAccessor::CopyPage), py::arg("chunkIndex").none(false), py::arg("source").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_CopyPage));
+  VolumeDataPageAccessor_.def("readPage"                    , static_cast<native::VolumeDataPage *(VolumeDataPageAccessor::*)(int64_t)>(&VolumeDataPageAccessor::ReadPage), py::arg("chunkIndex").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_ReadPage));
+  VolumeDataPageAccessor_.def("readPageAtPosition"          , [](VolumeDataPageAccessor* self, const py::array_t<int,py::array::forcecast>& position) { return self->ReadPageAtPosition(PyArrayAdapter<int, 6, false>::getArrayChecked(position)); }, py::arg("position").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_ReadPageAtPosition));
+  VolumeDataPageAccessor_.def("commit"                      , static_cast<void(VolumeDataPageAccessor::*)()>(&VolumeDataPageAccessor::Commit), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_Commit));
+
+  py::enum_<VolumeDataPageAccessor::AccessMode> 
+    VolumeDataPageAccessor_AccessMode_(VolumeDataPageAccessor_,"AccessMode", OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode));
+
+  VolumeDataPageAccessor_AccessMode_.value("AccessMode_ReadOnly"         , VolumeDataPageAccessor::AccessMode::AccessMode_ReadOnly, OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode_AccessMode_ReadOnly));
+  VolumeDataPageAccessor_AccessMode_.value("AccessMode_ReadWrite"        , VolumeDataPageAccessor::AccessMode::AccessMode_ReadWrite, OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode_AccessMode_ReadWrite));
+  VolumeDataPageAccessor_AccessMode_.value("AccessMode_Create"           , VolumeDataPageAccessor::AccessMode::AccessMode_Create, OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode_AccessMode_Create));
+  VolumeDataPageAccessor_AccessMode_.value("AccessMode_CreateWithoutLODGeneration", VolumeDataPageAccessor::AccessMode::AccessMode_CreateWithoutLODGeneration, OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode_AccessMode_CreateWithoutLODGeneration));
+  VolumeDataPageAccessor_AccessMode_.value("AccessMode_ReadWriteWithoutLODGeneration", VolumeDataPageAccessor::AccessMode::AccessMode_ReadWriteWithoutLODGeneration, OPENVDS_DOCSTRING(VolumeDataPageAccessor_AccessMode_AccessMode_ReadWriteWithoutLODGeneration));
+
+//AUTOGEN-END
+// IMPLEMENTED :     VolumeDataPage_.def("getBuffer"                   , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& size, py::array_t<int,py::array::c_style>& pitch) { return self->GetBuffer(PyArrayAdapter<int, 6, true>::getArrayChecked(size), PyArrayAdapter<int, 6, true>::getArrayChecked(pitch)); }, py::arg("size").none(false), py::arg("pitch").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetBuffer));
+// IMPLEMENTED :     VolumeDataPage_.def("getBuffer"                   , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& pitch) { return self->GetBuffer(PyArrayAdapter<int, 6, true>::getArrayChecked(pitch)); }, py::arg("pitch").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetBuffer_2));
+     VolumeDataPage_.def("getBuffer"                   , [](VolumeDataPage* self)
+       {
+         int size[VolumeDataLayout::Dimensionality_Max];
+         int pitch[VolumeDataLayout::Dimensionality_Max];
+         const void *buffer = self->GetBuffer(size, pitch);
+
+         auto channelDescriptor = self->GetVolumeDataPageAccessor().GetChannelDescriptor();
+         int itemsize = GetItemSize(channelDescriptor.GetFormat(), channelDescriptor.GetComponents());
+         const char *format = GetPythonFormatString(channelDescriptor.GetFormat(), channelDescriptor.GetComponents());
+
+         int dimensionality = self->GetVolumeDataPageAccessor().GetLayout()->GetDimensionality();
+         std::vector<int> shape(dimensionality);
+         std::vector<int> strides(dimensionality);
+         for(int dimension = 0; dimension < dimensionality; dimension++)
+         {
+           if(channelDescriptor.GetFormat() == VolumeDataFormat::Format_1Bit)
+           {
+             shape[dimensionality - 1 - dimension] = (dimension == 0) ? (size[dimension] + 7) / 8 :size[dimension];
+             assert((dimension == 0 && pitch[dimension] == 1) || (pitch[dimension] % 8 == 0));
+             strides[dimensionality - 1 - dimension] = (dimension == 0) ? 1 : pitch[dimension] / 8;
+           }
+           else
+           {
+             shape[dimensionality - 1 - dimension] = size[dimension];
+             strides[dimensionality - 1 - dimension] = pitch[dimension] * itemsize;
+           }
+         }
+
+         return py::memoryview::from_buffer(buffer, itemsize, format, shape, strides);
+       }, OPENVDS_DOCSTRING(VolumeDataPage_GetBuffer));
+
+// IMPLEMENTED :     VolumeDataPage_.def("getWritableBuffer"           , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& size, py::array_t<int,py::array::c_style>& pitch) { return self->GetWritableBuffer(PyArrayAdapter<int, 6, true>::getArrayChecked(size), PyArrayAdapter<int, 6, true>::getArrayChecked(pitch)); }, py::arg("size").none(false), py::arg("pitch").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetWritableBuffer));
+// IMPLEMENTED :     VolumeDataPage_.def("getWritableBuffer"           , [](VolumeDataPage* self, py::array_t<int,py::array::c_style>& pitch) { return self->GetWritableBuffer(PyArrayAdapter<int, 6, true>::getArrayChecked(pitch)); }, py::arg("pitch").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetWritableBuffer_2));
+     VolumeDataPage_.def("getWritableBuffer"           , [](VolumeDataPage* self)
+       {
+         int size[VolumeDataLayout::Dimensionality_Max];
+         int pitch[VolumeDataLayout::Dimensionality_Max];
+         void *buffer = self->GetWritableBuffer(size, pitch);
+
+         auto channelDescriptor = self->GetVolumeDataPageAccessor().GetChannelDescriptor();
+         int itemsize = GetItemSize(channelDescriptor.GetFormat(), channelDescriptor.GetComponents());
+         const char *format = GetPythonFormatString(channelDescriptor.GetFormat(), channelDescriptor.GetComponents());
+
+         int dimensionality = self->GetVolumeDataPageAccessor().GetLayout()->GetDimensionality();
+         std::vector<int> shape(dimensionality);
+         std::vector<int> strides(dimensionality);
+         for(int dimension = 0; dimension < dimensionality; dimension++)
+         {
+           if(channelDescriptor.GetFormat() == VolumeDataFormat::Format_1Bit)
+           {
+             shape[dimensionality - 1 - dimension] = (dimension == 0) ? (size[dimension] + 7) / 8 :size[dimension];
+             assert((dimension == 0 && pitch[dimension] == 1) || (pitch[dimension] % 8 == 0));
+             strides[dimensionality - 1 - dimension] = (dimension == 0) ? 1 : pitch[dimension] / 8;
+           }
+           else
+           {
+             shape[dimensionality - 1 - dimension] = size[dimension];
+             strides[dimensionality - 1 - dimension] = pitch[dimension] * itemsize;
+           }
+         }
+
+         return py::memoryview::from_buffer(buffer, itemsize, format, shape, strides);
+       }, OPENVDS_DOCSTRING(VolumeDataPage_GetWritableBuffer));
+
+  VolumeDataPage_.def("getMinMax"                   , [](VolumeDataPage* self)
+    {
+      std::array<int, VolumeDataLayout::Dimensionality_Max> voxelMin, voxelMax;
+      self->GetMinMax(PODArrayReference(voxelMin), PODArrayReference(voxelMax));
+      return std::make_pair(voxelMin, voxelMax);
+    }, py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetMinMax));
+
+  VolumeDataPage_.def("getMinMaxExcludingMargin"    , [](VolumeDataPage* self)
+    {
+      std::array<int, VolumeDataLayout::Dimensionality_Max> voxelMin, voxelMax;
+      self->GetMinMaxExcludingMargin(PODArrayReference(voxelMin), PODArrayReference(voxelMax));
+      return std::make_pair(voxelMin, voxelMax);
+    }, py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPage_GetMinMaxExcludingMargin));
+
+  VolumeDataPageAccessor_.def("getNumSamples"               , [](VolumeDataPageAccessor* self)
+    {
+      std::array<int, VolumeDataLayout::Dimensionality_Max> numSamples;
+      self->GetNumSamples(PODArrayReference(numSamples));
+      return numSamples;
+    }, py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetNumSamples));
+
+  VolumeDataPageAccessor_.def("getChunkMinMax"              , [](VolumeDataPageAccessor* self, int64_t chunk)
+    {
+      std::array<int, VolumeDataLayout::Dimensionality_Max> voxelMin, voxelMax;
+      self->GetChunkMinMax(chunk, PODArrayReference(voxelMin), PODArrayReference(voxelMax));
+      return std::make_pair(voxelMin, voxelMax);
+    }, py::arg("chunk").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkMinMax));
+
+  VolumeDataPageAccessor_.def("getChunkMinMaxExcludingMargin", [](VolumeDataPageAccessor* self, int64_t chunk)
+    {
+      std::array<int, VolumeDataLayout::Dimensionality_Max> voxelMin, voxelMax;
+      self->GetChunkMinMaxExcludingMargin(chunk, PODArrayReference(voxelMin), PODArrayReference(voxelMax));
+      return std::make_pair(voxelMin, voxelMax);
+    }, py::arg("chunk").none(false), py::call_guard<py::gil_scoped_release>(), OPENVDS_DOCSTRING(VolumeDataPageAccessor_GetChunkMinMaxExcludingMargin));
+
+  // Register accessor types
+  RegisterVolumeDataReadAccessor<native::IntVector2, bool>          (m, "VolumeData2DReadAccessor1Bit");
+  RegisterVolumeDataReadAccessor<native::IntVector2, uint8_t>       (m, "VolumeData2DReadAccessorU8");  
+  RegisterVolumeDataReadAccessor<native::IntVector2, uint16_t>      (m, "VolumeData2DReadAccessorU16"); 
+  RegisterVolumeDataReadAccessor<native::IntVector2, uint32_t>      (m, "VolumeData2DReadAccessorU32"); 
+  RegisterVolumeDataReadAccessor<native::IntVector2, uint64_t>      (m, "VolumeData2DReadAccessorU64"); 
+  RegisterVolumeDataReadAccessor<native::IntVector2, float>         (m, "VolumeData2DReadAccessorR32"); 
+  RegisterVolumeDataReadAccessor<native::IntVector2, double>        (m, "VolumeData2DReadAccessorR64"); 
+  RegisterVolumeDataReadAccessor<native::IntVector3, bool>          (m, "VolumeData3DReadAccessor1Bit");
+  RegisterVolumeDataReadAccessor<native::IntVector3, uint8_t>       (m, "VolumeData3DReadAccessorU8");  
+  RegisterVolumeDataReadAccessor<native::IntVector3, uint16_t>      (m, "VolumeData3DReadAccessorU16"); 
+  RegisterVolumeDataReadAccessor<native::IntVector3, uint32_t>      (m, "VolumeData3DReadAccessorU32"); 
+  RegisterVolumeDataReadAccessor<native::IntVector3, uint64_t>      (m, "VolumeData3DReadAccessorU64"); 
+  RegisterVolumeDataReadAccessor<native::IntVector3, float>         (m, "VolumeData3DReadAccessorR32"); 
+  RegisterVolumeDataReadAccessor<native::IntVector3, double>        (m, "VolumeData3DReadAccessorR64"); 
+  RegisterVolumeDataReadAccessor<native::IntVector4, bool>          (m, "VolumeData4DReadAccessor1Bit");
+  RegisterVolumeDataReadAccessor<native::IntVector4, uint8_t>       (m, "VolumeData4DReadAccessorU8");  
+  RegisterVolumeDataReadAccessor<native::IntVector4, uint16_t>      (m, "VolumeData4DReadAccessorU16"); 
+  RegisterVolumeDataReadAccessor<native::IntVector4, uint32_t>      (m, "VolumeData4DReadAccessorU32"); 
+  RegisterVolumeDataReadAccessor<native::IntVector4, uint64_t>      (m, "VolumeData4DReadAccessorU64");
+  RegisterVolumeDataReadAccessor<native::IntVector4, float>         (m, "VolumeData4DReadAccessorR32");
+  RegisterVolumeDataReadAccessor<native::IntVector4, double>        (m, "VolumeData4DReadAccessorR64");
+  RegisterVolumeDataReadAccessor<native::FloatVector2, float>       (m, "VolumeData2DInterpolatingAccessorR32");
+  RegisterVolumeDataReadAccessor<native::FloatVector2, double>      (m, "VolumeData2DInterpolatingAccessorR64");
+  RegisterVolumeDataReadAccessor<native::FloatVector3, float>       (m, "VolumeData3DInterpolatingAccessorR32");
+  RegisterVolumeDataReadAccessor<native::FloatVector3, double>      (m, "VolumeData3DInterpolatingAccessorR64");
+  RegisterVolumeDataReadAccessor<native::FloatVector4, float>       (m, "VolumeData4DInterpolatingAccessorR32");
+  RegisterVolumeDataReadAccessor<native::FloatVector4, double>      (m, "VolumeData4DInterpolatingAccessorR64");
+
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, bool>          (m, "VolumeData2DReadWriteAccessor1Bit");
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, uint8_t>       (m, "VolumeData2DReadWriteAccessorU8");  
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, uint16_t>      (m, "VolumeData2DReadWriteAccessorU16"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, uint32_t>      (m, "VolumeData2DReadWriteAccessorU32"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, uint64_t>      (m, "VolumeData2DReadWriteAccessorU64"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, float>         (m, "VolumeData2DReadWriteAccessorR32"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector2, double>        (m, "VolumeData2DReadWriteAccessorR64"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, bool>          (m, "VolumeData3DReadWriteAccessor1Bit");
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, uint8_t>       (m, "VolumeData3DReadWriteAccessorU8");  
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, uint16_t>      (m, "VolumeData3DReadWriteAccessorU16"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, uint32_t>      (m, "VolumeData3DReadWriteAccessorU32"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, uint64_t>      (m, "VolumeData3DReadWriteAccessorU64"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, float>         (m, "VolumeData3DReadWriteAccessorR32"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector3, double>        (m, "VolumeData3DReadWriteAccessorR64"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, bool>          (m, "VolumeData4DReadWriteAccessor1Bit");
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, uint8_t>       (m, "VolumeData4DReadWriteAccessorU8");  
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, uint16_t>      (m, "VolumeData4DReadWriteAccessorU16"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, uint32_t>      (m, "VolumeData4DReadWriteAccessorU32"); 
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, uint64_t>      (m, "VolumeData4DReadWriteAccessorU64");
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, float>         (m, "VolumeData4DReadWriteAccessorR32");
+  RegisterVolumeDataReadWriteAccessor<native::IntVector4, double>        (m, "VolumeData4DReadWriteAccessorR64");
+
+}

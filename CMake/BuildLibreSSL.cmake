@@ -1,0 +1,26 @@
+macro(BuildLibreSSL)
+  if (USE_LIBRESSL)
+    get_property(_isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if (${_isMultiConfig})
+      set(TOOLSET_VERSION ${MSVC_TOOLSET_VERSION_LOCAL})
+    endif()
+    if (WIN32)
+      list(APPEND LIBRESSL_LIBS_LIST "lib/crypto.lib")
+      list(APPEND LIBRESSL_LIBS_LIST "lib/ssl.lib")
+    elseif (APPLE)
+    else()
+      list(APPEND LIBRESSL_DLLS_LIST "lib${LIBSUFFIX}/libcrypto.so.57.2.0")
+      list(APPEND LIBRESSL_DLLS_LIST "lib${LIBSUFFIX}/libtls.so.33.2.0")
+      list(APPEND LIBRESSL_DLLS_LIST "lib${LIBSUFFIX}/libssl.so.60.2.0")
+    endif()
+	
+
+    list(APPEND CMAKE_ARGS "-DLIBRESSL_APPS=OFF")
+    list(APPEND CMAKE_ARGS "-DLIBRESSL_TESTS=OFF")
+    list(APPEND CMAKE_ARGS "-DBUILD_SHARED_LIBS=OFF")
+
+    BuildExternal(libressl ${libressl_VERSION} "" ${libressl_SOURCE_DIR} "${LIBRESSL_LIBS_LIST}" "${LIBRESSL_DLLS_LIST}" ON "${CMAKE_ARGS}")
+    set(OPENSSL_ROOT_DIR ${libressl_INSTALL_INT_CONFIG} PARENT_SCOPE)
+  endif()
+
+endmacro()

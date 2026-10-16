@@ -1,0 +1,204 @@
+/*
+ * Copyright 2019 The Open Group
+ * Copyright 2019 INT, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "CPPJNI.h"
+
+#include <OpenVDS/VolumeDataChannelDescriptor.h>
+
+
+// Begin of stuff from open-vds-master/examples/SliceDump/GenerateVDS.h
+
+#include <OpenVDS/OpenVDS.h>
+#include <OpenVDS/VolumeDataLayoutDescriptor.h>
+#include <OpenVDS/VolumeDataAxisDescriptor.h>
+#include <OpenVDS/VolumeDataChannelDescriptor.h>
+#include <OpenVDS/KnownMetadata.h>
+#include <OpenVDS/GlobalMetadataCommon.h>
+#include <OpenVDS/MetadataContainer.h>
+#include <OpenVDS/VolumeDataLayout.h>
+#include <OpenVDS/VolumeDataAccess.h>
+#include <OpenVDS/VolumeIndexer.h>
+#include <Noise/SimplexNoiseKernel.h>
+
+#include <functional>
+#include <random>
+
+static void getScaleOffsetForFormat(float min, float max, bool novalue, OpenVDS::VolumeDataChannelDescriptor::Format format, float &scale, float &offset)
+{
+  switch (format)
+  {
+  case OpenVDS::VolumeDataChannelDescriptor::Format_U8:
+    scale = 1.f / (255.f - novalue) * (max - min);
+    offset = min;
+    break;
+  case OpenVDS::VolumeDataChannelDescriptor::Format_U16:
+    scale = 1.f/(65535.f - novalue) * (max - min);
+    offset = min;
+    break;
+  case OpenVDS::VolumeDataChannelDescriptor::Format_R32:
+  case OpenVDS::VolumeDataChannelDescriptor::Format_U32:
+  case OpenVDS::VolumeDataChannelDescriptor::Format_R64:
+  case OpenVDS::VolumeDataChannelDescriptor::Format_U64:
+  case OpenVDS::VolumeDataChannelDescriptor::Format_1Bit:
+  case OpenVDS::VolumeDataChannelDescriptor::Format_Any:
+    scale = 1.0f;
+    offset = 0.0f;
+  }
+}
+
+static std::shared_ptr<OpenVDS::VDS>
+generateSimpleInMemory3DVDS(int32_t samplesX = 100, int32_t samplesY = 100, int32_t samplesZ = 100, OpenVDS::VolumeDataChannelDescriptor::Format format = OpenVDS::VolumeDataChannelDescriptor::Format_R32)
+{
+  auto brickSize = OpenVDS::VolumeDataLayoutDescriptor::BrickSize_32;
+  int negativeMargin = 4;
+  int positiveMargin = 4;
+  int brickSize2DMultiplier = 4;
+  auto lodLevels = OpenVDS::VolumeDataLayoutDescriptor::LODLevels_None;
+  auto layoutOptions = OpenVDS::VolumeDataLayoutDescriptor::Options_None;
+  OpenVDS::VolumeDataLayoutDescriptor layoutDescriptor(brickSize, negativeMargin, positiveMargin, brickSize2DMultiplier, lodLevels, layoutOptions);
+
+  std::vector<OpenVDS::VolumeDataAxisDescriptor> axisDescriptors;
+  axisDescriptors.emplace_back(samplesX, KNOWNMETADATA_SURVEYCOORDINATE_INLINECROSSLINE_AXISNAME_SAMPLE, "ms", 0.0f, 4.f);
+  axisDescriptors.emplace_back(samplesY, KNOWNMETADATA_SURVEYCOORDINATE_INLINECROSSLINE_AXISNAME_CROSSLINE, "", 1932.f, 2536.f);
+  axisDescriptors.emplace_back(samplesZ, KNOWNMETADATA_SURVEYCOORDINATE_INLINECROSSLINE_AXISNAME_INLINE,  "", 9985.f, 10369.f);
+
+  std::vector<OpenVDS::VolumeDataChannelDescriptor> channelDescriptors;
+  float rangeMin = -0.1234f;
+  float rangeMax = 0.1234f;
+  float intScale;
+  float intOffset;
+  getScaleOffsetForFormat(rangeMin, rangeMax, true, format, intScale, intOffset);
+  channelDescriptors.emplace_back(format, OpenVDS::VolumeDataComponents::Components_1, AMPLITUDE_ATTRIBUTE_NAME, "", rangeMin, rangeMax, OpenVDS::VolumeDataMapping::Direct, 1, OpenVDS::VolumeDataChannelDescriptor::Default, 0.f, intScale, intOffset);
+
+  OpenVDS::InMemoryOpenOptions options;
+  OpenVDS::Error error;
+
+  OpenVDS::MetadataContainer metadataContainer;
+  metadataContainer.SetMetadataInt( "categoryInt", "Int", 123 );
+  metadataContainer.SetMetadataIntVector2( "categoryInt", "IntVector2", OpenVDS::IntVector2( 45, 78 ) );
+  metadataContainer.SetMetadataIntVector3( "categoryInt", "IntVector3", OpenVDS::IntVector3( 45, 78 , 72) );
+  metadataContainer.SetMetadataIntVector4( "categoryInt", "IntVector4", OpenVDS::IntVector4( 45, 78 , 72,84 ));
+  metadataContainer.SetMetadataFloat( "categoryFloat", "Float", 123.f );
+  metadataContainer.SetMetadataFloatVector2( "categoryFloat", "FloatVector2", OpenVDS::FloatVector2( 45.5f, 78.75f ) );
+  metadataContainer.SetMetadataFloatVector3( "categoryFloat", "FloatVector3", OpenVDS::FloatVector3( 45.5f, 78.75f , 72.75f) );
+  metadataContainer.SetMetadataFloatVector4( "categoryFloat", "FloatVector4", OpenVDS::FloatVector4( 45.5f, 78.75f , 72.75f,84.1f) );
+  metadataContainer.SetMetadataDouble( "categoryDouble", "Double", 123.);
+  metadataContainer.SetMetadataDoubleVector2( "categoryDouble", "DoubleVector2", OpenVDS::DoubleVector2( 45.5, 78.75 ) );
+  metadataContainer.SetMetadataDoubleVector3( "categoryDouble", "DoubleVector3", OpenVDS::DoubleVector3( 45.5, 78.75 , 72.75) );
+  metadataContainer.SetMetadataDoubleVector4( "categoryDouble", "DoubleVector4", OpenVDS::DoubleVector4( 45.5, 78.75 , 72.75,84.1) );
+  metadataContainer.SetMetadataString( "categoryString", "String", std::string( "Test string" ) );
+  char data[4] = { 1,2,3,4 };
+  metadataContainer.SetMetadataBLOB("categoryBLOB", "BLOB", data, sizeof(data));
+
+  OpenVDS::VDSHandle vds = OpenVDS::Create(options, layoutDescriptor, axisDescriptors, channelDescriptors, metadataContainer, error);
+  if (vds) 
+  {
+    return CPPJNI_createSharedPtr<OpenVDS::VDS>(vds);
+  }
+  CPPJNI_onVDSError(error);
+  return std::shared_ptr<OpenVDS::VDS>();
+}
+
+static void fillVolumeDataPages(std::shared_ptr<OpenVDS::VolumeDataPageAccessor> pageAccessor, std::function<void(void*buffer, OpenVDS::VolumeDataFormat format, OpenVDS::VolumeIndexer3D const &outputIndexer)> fillPage)
+{
+  int32_t chunkCount = int32_t(pageAccessor->GetChunkCount());
+  auto layout = pageAccessor->GetLayout();
+  OpenVDS::VolumeDataFormat format = layout->GetChannelFormat(pageAccessor->GetChannelIndex());
+
+  for (int i = 0; i < chunkCount; i++)
+  {
+    OpenVDS::VolumeDataPage *page =  pageAccessor->CreatePage(i);
+    OpenVDS::VolumeIndexer3D outputIndexer(page, 0, 0, OpenVDS::Dimensions_012, layout);
+
+    int pitch[OpenVDS::Dimensionality_Max];
+    void *buffer = page->GetWritableBuffer(pitch);
+    fillPage(buffer, format, outputIndexer);
+    page->Release();
+  }
+  pageAccessor->Commit();
+}
+
+static void fill3DVDSWithNoise(OpenVDS::VDS *vds, int32_t channel = 0, const OpenVDS::FloatVector3 &frequency = OpenVDS::FloatVector3(0.6f, 2.f, 4.f), bool createLODs = true)
+{
+  OpenVDS::VolumeDataAccessManager accessManager = OpenVDS::GetAccessManager(vds);
+
+  std::shared_ptr<OpenVDS::VolumeDataPageAccessor> pageAccessor = accessManager.CreateVolumeDataPageAccessor(OpenVDS::Dimensions_012, channel, 0, 100, createLODs ? OpenVDS::VolumeDataAccessManager::AccessMode_Create : OpenVDS::VolumeDataAccessManager::AccessMode_CreateWithoutLODGeneration);
+  //ASSERT_TRUE(pageAccessor);
+
+  fillVolumeDataPages(pageAccessor, [frequency](void*buffer, OpenVDS::VolumeDataFormat format, OpenVDS::VolumeIndexer3D const &outputIndexer)
+  {
+    OpenVDS::CalculateNoise3D(buffer, format, outputIndexer, frequency, 0.021f, 0.f, true, 345);
+  });
+
+  OpenVDS::Error error;
+  accessManager.Flush(error);
+}
+
+static void fill3DVDSWithBitNoise(OpenVDS::VDS *vds, int32_t channel = 0)
+{
+  OpenVDS::VolumeDataAccessManager accessManager = OpenVDS::GetAccessManager(vds);
+
+  std::shared_ptr<OpenVDS::VolumeDataPageAccessor> pageAccessor = accessManager.CreateVolumeDataPageAccessor(OpenVDS::Dimensions_012, channel, 0, 100, OpenVDS::VolumeDataAccessManager::AccessMode_Create);
+  //ASSERT_TRUE(pageAccessor);
+
+  std::mt19937 gen(123);
+  std::bernoulli_distribution dist(0.8);
+
+  fillVolumeDataPages(pageAccessor, [&gen, &dist](void*buffer, OpenVDS::VolumeDataFormat format, OpenVDS::VolumeIndexer3D const &outputIndexer)
+  {
+    for (int i = 0; i < outputIndexer.dataBlockSamples[2]; i++)
+    for (int j = 0; j < outputIndexer.dataBlockSamples[1]; j++)
+    for (int k = 0; k < outputIndexer.dataBlockSamples[0]; k++)
+    {
+      OpenVDS::WriteElement(static_cast<bool *>(buffer), outputIndexer.LocalIndexToBitDataIndex({k, j, i}), dist(gen));
+    }
+  });
+
+  OpenVDS::Error error;
+  accessManager.Flush(error);
+}
+
+// End of stuff from open-vds-master/examples/SliceDump/GenerateVDS.h
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+JNIEXPORT jlong JNICALL Java_org_opengroup_openvds_InMemoryVDSGenerator_CreateVDSImpl
+(JNIEnv *env, jclass, jint nXSamples, jint nYSamples, jint nZSamples, jlong format)
+{
+  JNIEnvGuard
+    envGuard(env);
+
+  CPPJNI_TRY 
+  {
+    auto vdsPtr = generateSimpleInMemory3DVDS( nXSamples, nYSamples, nZSamples, (OpenVDS::VolumeDataChannelDescriptor::Format)format);
+    if (!vdsPtr.get()) 
+    {
+      throw std::runtime_error("OpenVDS::Create returned NULL");
+    }
+    fill3DVDSWithNoise(vdsPtr.get());
+    return CPPJNI_createObjectContext<OpenVDS::VDS>(vdsPtr)->handle();
+  }
+  CPPJNI_CATCH
+  return 0;
+}
+
+#ifdef __cplusplus
+}
+#endif

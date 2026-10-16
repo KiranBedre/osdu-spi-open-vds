@@ -1,0 +1,347 @@
+/****************************************************************************
+** Copyright 2019 The Open Group
+** Copyright 2019 Bluware, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+****************************************************************************/
+
+#include <VDS/Hash.h>
+
+#include "IO/File.h"
+#include <SEGYUtils/SEGYFileInfo.h>
+#include <SEGYUtils/DataProvider.h>
+
+#include <iostream>
+#include <algorithm>
+#include <cassert>
+#include <chrono>
+
+using namespace OpenVDS;
+using namespace SEGY;
+
+bool
+SEGYFileInfo::Is4D() const
+{
+  return m_segyType == SEGY::SEGYType::Prestack || m_segyType == SEGY::SEGYType::PrestackOffsetSorted;
+}
+
+bool
+SEGYFileInfo::IsUnbinned() const
+{
+  return IsSEGYTypeUnbinned(m_segyType);
+}
+
+bool
+SEGYFileInfo::HasGatherOffset() const
+{
+  // TODO unbinned gathers may be angle gathers?
+  return m_segyType == SEGYType::Prestack || m_segyType == SEGYType::Prestack2D || IsOffsetSorted() || IsUnbinned();
+}
+
+bool
+SEGYFileInfo::Is2D() const
+{
+  return m_segyType == SEGYType::Poststack2D || m_segyType == SEGYType::Prestack2D;
+}
+
+bool
+SEGYFileInfo::IsOffsetSorted() const
+{
+  return m_segyType == SEGYType::PrestackOffsetSorted;
+}
+
+double SEGYFileInfo::convertScaleToScaleFactor(int scale)
+{
+  if (scale < 0)
+  {
+    return 1.0 / float(std::abs(scale));
+  }
+  else if (scale > 0)
+  {
+    return 1.0 * float(std::abs(scale));
+  }
+  return 1.0;
+}
+
+bool
+SEGYFileInfo::IsNextPrimaryKeyInOrder(const std::vector<SEGYSegmentInfo>& segmentInfoList, int nextPrimaryKey)
+{
+  if (segmentInfoList.size() < 2)
+  {
+    // we haven't established an order yet
+    return true;
+  }
+  if (segmentInfoList[0].m_primaryKey < segmentInfoList[1].m_primaryKey)
+  {
+    // primary keys are ascending; nextPrimaryKey should be greater than the previous key
+    return nextPrimaryKey > segmentInfoList.back().m_primaryKey;
+  }
+  // primary keys are descending; nextPrimaryKey should be less than the previous key
+  return nextPrimaryKey < segmentInfoList.back().m_primaryKey;
+}
+
+SEGYBinInfo
+SEGYFileInfo::readBinInfoFromHeader(const char *header, SEGYBinInfoHeaderFields const &headerFields, Endianness endianness, int segmentTraceIndex) const
+{
+  int inlineNumber    = ReadFieldFromHeader(header, headerFields.m_inlineNumberHeaderField,    endianness);
+  int crosslineNumber = IsUnbinned() ? segmentTraceIndex : ReadFieldFromHeader(header, headerFields.m_crosslineNumberHeaderField, endianness);
+
+  int ensembleXCoordinate = ReadFieldFromHeader(header, headerFields.m_ensembleXCoordinateHeaderField, endianness);
+  int ensembleYCoordinate = ReadFieldFromHeader(header, headerFields.m_ensembleYCoordinateHeaderField, endianness);
+
+  double scaleFactor = 1.0f;
+
+  if(headerFields.m_scaleOverride == 0.0)
+  {
+    int scale = ReadFieldFromHeader(header, TraceHeader::CoordinateScaleHeaderField, endianness);
+    scaleFactor = convertScaleToScaleFactor(scale);
+  }
+  else
+  {
+    scaleFactor = headerFields.m_scaleOverride;
+  }
+
+  return SEGYBinInfo(inlineNumber, crosslineNumber, double(ensembleXCoordinate) * scaleFactor, double(ensembleYCoordinate) * scaleFactor);
+}
+
+int
+SEGYFileInfo::TraceByteSize() const
+{
+  return TraceHeaderSize + m_sampleCount * SEGY::FormatSize(m_dataSampleFormatCode);
+}
+
+uint64_t
+SEGYFileInfo::StaticGetUniqueID()
+{
+  // Make a globally unique ID for the result of this scan operation
+  return OpenVDS::HashCombiner(std::chrono::system_clock::now().time_since_epoch().count()).Add(std::chrono::high_resolution_clock::now().time_since_epoch().count()).GetCombinedHash();
+}
+
+bool
+SEGYFileInfo::Scan(const std::vector<DataProvider>& dataProviders, OpenVDS::Error &error, HeaderField const &primaryKeyHeaderField, HeaderField const &secondaryKeyHeaderField, SEGY::HeaderField const &startTimeHeaderField, SEGY::HeaderField const& offsetHeaderField, SEGYBinInfoHeaderFields const &binInfoHeaderFields)
+{
+  std::function<int(const char*)>
+    readOffset = [](const char* traceHeader) { return -1; };
+  if (IsOffsetSorted())
+  {
+    readOffset = [offsetHeaderField, this](const char* traceHeader) { return ReadFieldFromHeader(traceHeader, offsetHeaderField, m_headerEndianness); };
+  }
+
+  char textualFileHeader[TextualFileHeaderSize];
+  char binaryFileHeader[BinaryFileHeaderSize];
+  char traceHeader[TraceHeaderSize];
+
+  m_primaryKey = primaryKeyHeaderField;
+  m_secondaryKey = secondaryKeyHeaderField;
+
+  // we assume that the text/binary headers are the same for all files; read them from the first file
+  dataProviders[0].Read(textualFileHeader,                     0, TextualFileHeaderSize, error) &&
+  dataProviders[0].Read(binaryFileHeader,  TextualFileHeaderSize, BinaryFileHeaderSize,  error);
+
+  if(error.code != 0)
+  {
+    return false;
+  }
+
+  m_dataSampleFormatCode = BinaryHeader::DataSampleFormatCode(ReadFieldFromHeader(binaryFileHeader, BinaryHeader::DataSampleFormatCodeHeaderField, m_headerEndianness));
+
+  int64_t fileSize = dataProviders[0].Size(error);
+
+  if(error.code != 0)
+  {
+    return false;
+  }
+
+  if(fileSize == TextualFileHeaderSize + BinaryFileHeaderSize)
+  {
+    // TODO for multi-file we may want to search and see if we can find any file that has trace data, instead of only looking at the first file here
+    return true;
+  }
+
+  // Read first trace header of first file
+  dataProviders[0].Read(traceHeader, TextualFileHeaderSize + BinaryFileHeaderSize, TraceHeaderSize, error);
+
+  if(error.code != 0)
+  {
+    return false;
+  }
+
+  m_sampleCount = ReadFieldFromHeader(binaryFileHeader, BinaryHeader::NumSamplesHeaderField, m_headerEndianness);
+
+  m_startTimeMilliseconds = ReadFieldFromHeader(traceHeader, startTimeHeaderField, m_headerEndianness);
+
+  m_sampleIntervalMilliseconds = ReadFieldFromHeader(binaryFileHeader, BinaryHeader::SampleIntervalHeaderField, m_headerEndianness) / 1000.0;
+
+  m_detectedScale = ReadFieldFromHeader(traceHeader, TraceHeader::CoordinateScaleHeaderField, m_headerEndianness);
+
+  for (const auto& dataProvider : dataProviders)
+  {
+    int64_t fileSize = dataProvider.Size(error);
+
+    if (error.code != 0)
+    {
+      return false;
+    }
+
+    if (fileSize == TextualFileHeaderSize + BinaryFileHeaderSize)
+    {
+      continue;
+    }
+
+    // Read first trace header
+    dataProvider.Read(traceHeader, TextualFileHeaderSize + BinaryFileHeaderSize, TraceHeaderSize, error);
+
+    if (error.code != 0)
+    {
+      return false;
+    }
+
+    int
+      currentOffset = readOffset(traceHeader);
+
+    std::function<void(int, const SEGYSegmentInfo&)>
+      pushSegmentInfo;
+
+    if (IsOffsetSorted())
+    {
+      m_segmentInfoListsByOffset.emplace_back();
+      auto&
+        offsetMap = m_segmentInfoListsByOffset.back();
+      offsetMap.emplace(currentOffset, std::vector<SEGYSegmentInfo>());
+
+      pushSegmentInfo = [this](int offset, const SEGYSegmentInfo& segmentInfo) { m_segmentInfoListsByOffset.back()[offset].push_back(segmentInfo); };
+    }
+    else
+    {
+      m_segmentInfoLists.emplace_back();
+
+      pushSegmentInfo = [this](int offset, const SEGYSegmentInfo& segmentInfo) { m_segmentInfoLists.back().push_back(segmentInfo); };
+    }
+
+    m_traceCounts.emplace_back();
+    auto&
+      traceCount = m_traceCounts.back();
+
+    // If the sample count is not set in the binary header we try to find it from the first trace header
+    if (m_sampleCount == 0)
+    {
+      m_sampleCount = ReadFieldFromHeader(traceHeader, TraceHeader::NumSamplesHeaderField, m_headerEndianness);
+    }
+
+    // If the sample interval is not set in the binary header we try to find it from the first trace header
+    if (m_sampleIntervalMilliseconds == 0.0)
+    {
+      m_sampleIntervalMilliseconds = ReadFieldFromHeader(traceHeader, TraceHeader::SampleIntervalHeaderField, m_headerEndianness) / 1000.0;
+    }
+
+    const int64_t traceDataSize = (fileSize - TextualFileHeaderSize - BinaryFileHeaderSize);
+
+    traceCount = traceDataSize / TraceByteSize();
+
+    if (traceDataSize % TraceByteSize() != 0)
+    {
+      std::cerr << "Warning: File size is inconsistent with trace size";
+    }
+
+    if (traceCount == 0)
+    {
+      continue;
+    }
+
+    const int64_t lastTrace = (traceCount - 1);
+
+    // The outside trace is the first known trace outside the current segment (used when binary searching)
+    int64_t outsideTrace = 0, jump = 1;
+
+    SEGYBinInfo outsideBinInfo;
+
+    int primaryKey = Is2D() ? 0 : ReadFieldFromHeader(traceHeader, primaryKeyHeaderField, m_headerEndianness), nextPrimaryKey = 0;
+
+    SEGYSegmentInfo segmentInfo(primaryKey, 0, readBinInfoFromHeader(traceHeader, binInfoHeaderFields, m_headerEndianness, 1));
+
+    int64_t trace = 1;
+
+    int
+      testOffset = 0,
+      nextOffset = 0;
+
+    while (segmentInfo.m_traceStop != lastTrace)
+    {
+      dataProvider.Read(traceHeader, TextualFileHeaderSize + BinaryFileHeaderSize + trace * TraceByteSize(), TraceHeaderSize, error);
+
+      if (error.code != 0)
+      {
+        return false;
+      }
+
+      primaryKey = Is2D() ? 0 : ReadFieldFromHeader(traceHeader, primaryKeyHeaderField, m_headerEndianness);
+      testOffset = readOffset(traceHeader);
+
+      if (primaryKey == segmentInfo.m_primaryKey && (!IsOffsetSorted() || testOffset == currentOffset)) // expand current segment if the primary key matches
+      {
+        assert(trace > segmentInfo.m_traceStop);
+        segmentInfo.m_traceStop = trace;
+        segmentInfo.m_binInfoStop = readBinInfoFromHeader(traceHeader, binInfoHeaderFields, m_headerEndianness, static_cast<int>(trace - segmentInfo.m_traceStart + 1));
+      }
+      else
+      {
+        assert(outsideTrace == 0 || trace < outsideTrace);
+        outsideTrace = trace;
+        outsideBinInfo = readBinInfoFromHeader(traceHeader, binInfoHeaderFields, m_headerEndianness, 1);
+        nextPrimaryKey = primaryKey;
+        nextOffset = testOffset;
+      }
+
+      if (outsideTrace == segmentInfo.m_traceStop + 1) // current segment is finished
+      {
+        pushSegmentInfo(currentOffset, segmentInfo);
+
+        const int64_t
+          segmentLength = segmentInfo.m_traceStop - segmentInfo.m_traceStart + 1;
+
+        // check primary key ordering
+        if (!IsOffsetSorted() && !IsNextPrimaryKeyInOrder(m_segmentInfoLists.back(), nextPrimaryKey))
+        {
+          error.code = -1;
+          error.string = "Primary key values are not sorted. You may need to choose a different primary key.";
+          return false;
+        }
+
+        // start a new segment
+        segmentInfo = SEGYSegmentInfo(nextPrimaryKey, outsideTrace, outsideBinInfo);
+        trace = std::min(lastTrace, outsideTrace + segmentLength);
+        outsideTrace = 0, jump = 1;
+        currentOffset = nextOffset;
+      }
+      else if (outsideTrace == 0) // looking for a trace outside the current segment
+      {
+        trace = std::min(lastTrace, trace + jump);
+        jump *= 2;
+      }
+      else if (trace - jump > segmentInfo.m_traceStop) // looking for a trace inside the current segment
+      {
+        trace = trace - jump;
+        jump *= 2;
+      }
+      else // search for end of segment which must lie somewhere between the last known trace inside the current segment and the first known trace outside the current segment
+      {
+        trace = (segmentInfo.m_traceStop + outsideTrace + 1) / 2;
+      }
+    }
+
+    // final segment in this file is finished
+    pushSegmentInfo(testOffset, segmentInfo);
+  }
+
+  return true;
+}

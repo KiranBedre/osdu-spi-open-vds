@@ -1,0 +1,273 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "openvds_config_base",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
+      }
+    },
+    {
+      "name": "openvds_single_config",
+      "inherits": "openvds_config_base",
+      "generator": "Ninja",
+      "hidden": true
+    },
+    {
+      "name": "openvds_debug",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "openvds_release",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "openvds_relwithdebinfo",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "openvds_multi_config",
+      "generator": "Ninja Multi-Config",
+      "hidden": true,
+      "inherits": "openvds_config_base",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release;Debug",
+        "CMAKE_CROSS_CONFIGS": "all",
+        "CMAKE_DEFAULT_CONFIGS": "all"
+      }
+    },
+    {
+      "name": "openvds_clang_windows",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    },
+    {
+      "name": "openvds_asan",
+      "hidden": true,
+      "cacheVariables": {
+        "ENABLE_ASAN": "ON"
+      }
+    },
+    {
+      "name": "azuresdkforcpp",
+      "hidden": true,
+      "cacheVariables": {
+        "DISABLE_AZURESDKFORCPP_IOMANAGER": "OFF"
+      }
+    },
+    {
+      "name": "VS2017_x64",
+      "hidden": true,
+      "toolset": {
+        "value": "v141,host=x64,version=14.16",
+        "strategy": "external"
+      }
+    },
+    {
+      "name": "VS2019_x64",
+      "hidden": true,
+      "toolset": {
+        "value": "v142,host=x64,version=14.29",
+        "strategy": "external"
+      }
+    },
+    {
+      "name": "ManyLinux",
+      "hidden": true,
+      "cacheVariables": {
+        "Python3_ROOT_DIR": "/opt/python/cp310-cp310"
+      }
+    },
+    {
+      "name": "Debug",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_debug"
+      ],
+      "cacheVariables": {
+        "Python3_ROOT_DIR": "/opt/python/cp310-cp310"
+      }
+    },
+    {
+      "name": "DebugAsan",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_debug",
+        "openvds_asan"
+      ]
+    },
+    {
+      "name": "DebugClang",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_debug",
+        "openvds_clang_windows"
+      ]
+    },
+    {
+      "name": "Debug-VS2017",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "Debug",
+        "VS2017_x64"
+      ]
+    },
+    {
+      "name": "Debug-VS2019",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "Debug",
+        "VS2019_x64"
+      ]
+    },
+    {
+      "name": "Release",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_release"
+      ]
+    },
+    {
+      "name": "RelWithDebInfo",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_relwithdebinfo"
+      ]
+    },
+    {
+      "name": "ReleaseNoLto",
+      "description": "Build without link time optimizations",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_release"
+      ],
+      "cacheVariables": {
+        "DISABLE_LTO": "ON",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF"
+      }
+    },
+    {
+      "name": "ReleaseNoLtoWithAssertGNU",
+      "description": "No LTO and not defined NDEBUG to enable assert for gnu based compilers",
+      "inherits": [
+        "ReleaseNoLto"
+      ],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS_RELEASE": "-O3",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O3"
+      }
+    },
+    {
+      "name": "GitLabAlpineMasterBranch",
+      "description": "The master branch build on GitLab",
+      "inherits": [
+        "ReleaseNoLtoWithAssertGNU"
+      ],
+      "cacheVariables": {
+        "BUILD_DOCS": "ON"
+      }
+    },
+    {
+      "name": "MergeRequestManyLinux",
+      "inherits": [
+        "ReleaseNoLtoWithAssertGNU",
+	"ManyLinux"
+      ]
+    },
+    {
+      "name": "MergeRequestManyLinux2014",
+      "description": "Merge request for ManyLinux 2014 is built with this configuration. We need a unique build directory",
+      "inherits": [
+        "MergeRequestManyLinux"
+      ]
+    },
+    {
+      "name": "MergeRequestManyLinux2_28",
+      "description": "Merge request for ManyLinux 2_28 is built with this configuration. We need a unique build directory",
+      "inherits": [
+	"MergeRequestManyLinux"
+      ]
+    },
+    {
+      "name": "MergeRequestAlpine",
+      "description": "Merge reqeusts for Alpine Linux is built with this configuration.",
+      "inherits": [
+        "ReleaseNoLtoWithAssertGNU"
+      ]
+    },
+    {
+      "name": "ReleaseAlpineCurl",
+      "description": "Merge reqeusts for Alpine Linux is built with this configuration.",
+      "inherits": [
+        "ReleaseNoLtoWithAssertGNU"
+      ]
+    },
+    {
+      "name": "ReleaseClang",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_single_config",
+        "openvds_release",
+        "openvds_clang_windows"
+      ]
+    },
+    {
+      "name": "Release-VS2017",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "Release",
+        "VS2017_x64"
+      ]
+    },
+    {
+      "name": "RelWithDebInfo-VS2017",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "RelWithDebInfo",
+        "VS2017_x64"
+      ]
+    },
+    {
+      "name": "MultiConfig",
+      "description": "Built using the default Visual Studio version.",
+      "inherits": [
+        "openvds_multi_config"
+      ]
+    },
+    {
+      "name": "DebugWithDocs",
+      "description": "Debug build with docs",
+      "inherits": [
+        "Debug"
+      ],
+      "cacheVariables": {
+        "BUILD_DOCS": "ON"
+      }
+    }
+  ]
+}

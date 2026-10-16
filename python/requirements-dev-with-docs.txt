@@ -1,0 +1,12 @@
+markdown
+scikit-build
+pybind11
+numpy
+sphinx<7
+breathe
+myst-parser
+linkify-it-py
+sphinx-rtd-theme
+sphinx-design
+pytest
+pytest-benchmark

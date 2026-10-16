@@ -1,0 +1,444 @@
+/****************************************************************************
+** Copyright 2019 The Open Group
+** Copyright 2019 Bluware, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+****************************************************************************/
+#ifndef PYGLOBAL_H_INCLUDED
+#define PYGLOBAL_H_INCLUDED
+
+#include <OpenVDS/OpenVDS.h>
+#include <OpenVDS/VolumeDataAxisDescriptor.h>
+#include <OpenVDS/VolumeDataLayout.h>
+#include <OpenVDS/VolumeDataLayoutDescriptor.h>
+#include <OpenVDS/VolumeDataChannelDescriptor.h>
+#include <OpenVDS/VolumeData.h>
+#include <OpenVDS/VolumeDataAccess.h>
+#include <OpenVDS/KnownMetadata.h>
+#include <OpenVDS/MetadataAccess.h>
+#include <OpenVDS/MetadataContainer.h>
+#include <OpenVDS/GlobalState.h>
+#include <OpenVDS/Matrix.h>
+
+#include "generated_docstrings.h"
+
+#include <stdexcept>
+#include <mutex>
+
+#define OPENVDS_DOCSTRING(name) __doc_OpenVDS_ ## name
+
+namespace OpenVDS {
+
+class VolumeDataAccessorBase
+{
+};
+
+#ifdef OPENVDS_DEVELOPMENT_BUILD
+
+struct VDS;
+class IOManager;
+
+#else
+
+struct VDS
+{
+private:
+  VDS();
+  ~VDS();
+};
+
+class IOManager
+{
+private:
+  IOManager();
+  ~IOManager();
+};
+
+#endif
+
+}
+
+// Later versions of pybind11 have a check in py::handle::dec_ref() which asserts that
+// the GIL is held. This fails when wrapping a function that 
+//   1: takes one or more wrapped python objects as parameters (e.g py::buffer) and
+//   2: has a py::call_guard policy which released the GIL. 
+// Because the desctructor ordering of the parameter objects to the call is undefined,
+// the refcount of the parameter objects can be decremented *before* the call guard
+// is destroyed (when the GIL has not been reacquired). See this comment by one of the
+// pybind11 developers for context: https://github.com/pybind/pybind11/issues/4748#issuecomment-1639445403
+// Currently, all objects of this nature are client-owned, meaning their refcount cannot
+// under normal circumstances reach 0 which would cause them to be deleted. 
+// Therefore it should be safe to disable the check:
+#define PYBIND11_NO_ASSERT_GIL_HELD_INCREF_DECREF
+
+#if defined(_MSC_VER) && _MSC_VER <= 1900
+#pragma warning( push )
+#pragma warning( disable : 4800 )
+#endif
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <pybind11/numpy.h>
+#include <pybind11/attr.h>
+#include <pybind11/operators.h>
+
+#if defined(_MSC_VER) && _MSC_VER <= 1900
+#pragma warning( pop )
+#endif
+
+namespace py = pybind11;
+namespace native = OpenVDS;
+
+namespace pybind11 { namespace detail {
+
+template <typename T>
+struct type_caster<native::optional<T>> : optional_caster<native::optional<T>> 
+{
+};
+
+template<>
+struct type_caster<native::StringWrapper>
+{
+  std::string str;
+  static handle cast(native::StringWrapper &&src, return_value_policy policy, handle parent) {
+    std::string tmp(src.data, src.size);
+    return type_caster<std::string>::cast(tmp, policy, parent);
+  }
+
+  bool load(handle src, bool convert) {
+    type_caster<std::string> caster;
+    bool casted = caster.load(src, convert);
+    if (!casted)
+      return false;
+    str = static_cast<std::string>(caster);
+    value.data = str.data();
+    value.size = str.size();
+    return true;
+  }
+  PYBIND11_TYPE_CASTER(native::StringWrapper, _("str"));
+};
+
+template<typename T>
+struct type_caster<native::VectorWrapper<T>>
+{
+  using value_conv = make_caster<T>;
+  std::vector<T> vector;
+
+  static handle cast(native::VectorWrapper<T> &&src, return_value_policy policy, handle parent) {
+    std::vector<T> tmp;
+    tmp.insert(tmp.end(), src.data, src.data + src.size);
+    return type_caster<std::vector<T>>::cast(tmp, policy, parent);
+  }
+
+  bool load(handle src, bool convert) {
+    type_caster<std::vector<T>> caster;
+    bool casted = caster.load(src, convert);
+    if (!casted)
+      return false;
+    vector = static_cast<std::vector<T>>(caster);
+    value.data = vector.data();
+    value.size = vector.size();
+    return true;
+  }
+  PYBIND11_TYPE_CASTER(native::VectorWrapper<T>, _("List[") + value_conv::name + _("]"));
+};
+
+template<typename T, size_t COUNT, typename ... PACK>
+struct TypeExpander : public TypeExpander<T, COUNT - 1, T, PACK...>
+{
+};
+
+template<typename T, typename ... PACK>
+struct TypeExpander<T, 0, PACK...>
+{
+  static constexpr auto name = _("Tuple[") + concat(make_caster<PACK>::name...) + _("]");
+  using tuple_type = std::tuple<PACK...>;
+};
+
+template<typename T, size_t V_SIZE, typename ... PACK>
+struct TypeExpander<native::Vector<T, V_SIZE>, V_SIZE, PACK...> : TypeExpander<T, V_SIZE> {};
+
+template<typename T, size_t V_SIZE, size_t COUNT, typename ... PACK>
+struct TypeExpander<native::Matrix<T, V_SIZE>, COUNT, PACK...> : TypeExpander<native::Vector<T, V_SIZE>, COUNT - 1, native::Vector<T, V_SIZE>, PACK...>
+{};
+
+template<typename T, size_t V_SIZE, typename ... PACK>
+struct TypeExpander<native::Matrix<T, V_SIZE>, 0, PACK...>
+{
+  static constexpr auto name = _("Tuple[") + concat(TypeExpander<PACK, V_SIZE>::name...) + _("]");
+  using tuple_type = std::tuple<PACK...>;
+};
+
+template<typename Tuple, typename Vector, size_t COUNT>
+struct TupleVectorConverter
+{
+  static void copyToTuple(const Vector &vec, Tuple &tuple)
+  {
+    std::get<COUNT - 1>(tuple) = vec.data[COUNT - 1];
+    TupleVectorConverter<Tuple, Vector, COUNT - 1>::copyToTuple(vec, tuple);
+  }
+  static void copyToVector(const Tuple &tuple, Vector &vec)
+  {
+    vec.data[COUNT - 1] = std::get<COUNT-1>(tuple);
+    TupleVectorConverter<Tuple, Vector, COUNT - 1>::copyToVector(tuple, vec);
+  }
+};
+
+template<typename Tuple, typename Vector>
+struct TupleVectorConverter<Tuple, Vector, 0>
+{
+  static void copyToTuple(const Vector &, Tuple &) { }
+  static void copyToVector(const Tuple &, Vector &) { }
+};
+
+template<typename Tuple, typename Vector>
+void copyToTuple(const Vector &vec, Tuple &tuple)
+{
+  TupleVectorConverter<Tuple, Vector, sizeof(Vector::data) / sizeof(*Vector::data)>::copyToTuple(vec, tuple);
+}
+
+template<typename Tuple, typename Vector>
+void copyToVector(const Tuple &tuple, Vector &vec)
+{
+  TupleVectorConverter<Tuple, Vector, sizeof(Vector::data) / sizeof(*Vector::data)>::copyToVector(tuple, vec);
+}
+
+
+template<typename T, size_t SIZE>
+struct type_caster<native::Vector<T, SIZE>>
+{
+  using TheVectorT = native::Vector<T, SIZE>;
+  using TheTypeExpander = TypeExpander<TheVectorT, SIZE>;
+  static constexpr auto TheName = TheTypeExpander::name;
+
+  static handle cast(const native::Vector<T, SIZE> &src, return_value_policy policy, handle parent)
+  {
+    typename TheTypeExpander::tuple_type tmp;
+    copyToTuple(src, tmp);
+    return type_caster<typename TheTypeExpander::tuple_type>::cast(tmp, policy, parent);
+  }
+
+  bool load(handle src, bool convert)
+  {
+    type_caster<typename TheTypeExpander::tuple_type> caster;
+    bool casted = caster.load(src, convert);
+    if (!casted)
+      return false;
+    copyToVector(static_cast<typename TheTypeExpander::tuple_type>(caster), value);
+    return true;
+  }
+  PYBIND11_TYPE_CASTER(TheVectorT, TheName);
+};
+
+template<typename T, size_t SIZE>
+struct type_caster<native::Matrix<T, SIZE>>
+{
+  using TheMatrixT = native::Matrix<T, SIZE>;
+  using TheTypeExpander = TypeExpander<TheMatrixT, SIZE>;
+  static constexpr auto TheName = TheTypeExpander::name;
+
+  static handle cast(const native::Matrix<T, SIZE> &src, return_value_policy policy, handle parent)
+  {
+    typename TheTypeExpander::tuple_type tmp;
+    copyToTuple(src, tmp);
+    return type_caster<typename TheTypeExpander::tuple_type>::cast(tmp, policy, parent);
+  }
+
+  bool load(handle src, bool convert)
+  {
+    type_caster<typename TheTypeExpander::tuple_type> caster;
+    bool casted = caster.load(src, convert);
+    if (!casted)
+      return false;
+    copyToVector(static_cast<typename TheTypeExpander::tuple_type>(caster), value);
+    return true;
+  }
+  PYBIND11_TYPE_CASTER(TheMatrixT, TheName);
+};
+}}
+
+// Helpers for methods that take buffer pointers
+template<typename T, bool WRITABLE>
+T*
+PyGetBufferPtr(py::buffer& buffer)
+{
+  py::buffer_info info;
+  {
+    py::gil_scoped_acquire
+      acquire;
+
+    info = buffer.request(WRITABLE);
+    if (info.ptr == nullptr) 
+    {
+      throw std::runtime_error("Unable to obtain buffer.");
+    }
+  }
+  return (T*)info.ptr;
+}
+
+template<typename T, bool WRITABLE>
+T
+PyGetBufferSize(py::buffer& buffer)
+{
+  py::buffer_info info;
+  {
+    py::gil_scoped_acquire
+      acquire;
+
+    info = buffer.request(WRITABLE);
+    if (info.ptr == nullptr) 
+    {
+      throw std::runtime_error("Unable to obtain buffer.");
+    }
+    return (T)(info.size * info.itemsize);
+  }
+}
+
+// Adapter class to check fixed-size numpy arrays
+template<typename T, int LEN, bool MUTABLE>
+struct PyArrayAdapter;
+
+template<typename T, int LEN>
+struct PyArrayAdapter<T, LEN, true>
+{
+  static T*
+  getArrayBufferChecked(py::array_t<T, py::array::c_style>& arr, int* arrayCount = nullptr)
+  {
+    py::gil_scoped_acquire
+      acquire;
+
+    py::ssize_t n = 0;
+    int count = 0;
+    if (arr.ndim() == 1)
+    {
+      count = 1;
+      n = arr.shape(0);
+    }
+    else if (arr.ndim() == 2)
+    {
+      count = (int)arr.shape(0);
+      n = arr.shape(1);
+    }
+    if (arrayCount)
+    {
+      *arrayCount = count;
+    }
+    if (n < LEN)
+    {
+      throw std::invalid_argument("Array has the wrong size/dimensions.");
+    }
+    else
+    {
+      return arr.mutable_unchecked().mutable_data(0);
+    }
+  }
+
+  static T (&getArrayChecked(py::array_t<T, py::array::c_style> & arr, int* arrayCount = nullptr))[LEN]
+  {
+    T* tmp = getArrayBufferChecked(arr, arrayCount);
+    return *reinterpret_cast<T (*)[LEN]>(tmp);
+  }
+
+};
+
+template<typename T, int LEN>
+struct PyArrayAdapter<T, LEN, false>
+{
+  static const T*
+  getArrayBufferChecked(py::array_t<T> const& arr, int* arrayCount = nullptr)
+  {
+    py::gil_scoped_acquire
+      acquire;
+
+    py::ssize_t n = 0;
+    int count = 0;
+    if (arr.ndim() == 1)
+    {
+      count = 1;
+      n = arr.shape(0);
+    }
+    else if (arr.ndim() == 2)
+    {
+      count = (int)arr.shape(0);
+      n = arr.shape(1);
+    }
+    if (arrayCount)
+    {
+      *arrayCount = count;
+    }
+    if (n < LEN)
+    {
+      throw std::invalid_argument("Array has the wrong size/dimensions.");
+    }
+    else
+    {
+      return arr.unchecked().data(0);
+    }
+  }
+
+  static const T (&getArrayChecked(py::array_t<T, py::array::forcecast> const& arr, int* arrayCount = nullptr))[LEN]
+  {
+    const T* tmp = getArrayBufferChecked(arr, arrayCount);
+    return *reinterpret_cast<const T (*)[LEN]>(tmp);
+  }
+
+  static const T (*getArrayPtrChecked(py::array_t<T, py::array::forcecast> const& arr, int* arrayCount = nullptr))[LEN]
+  {
+    const T* tmp = getArrayBufferChecked(arr, arrayCount);
+    return reinterpret_cast<const T (*)[LEN]>(tmp);
+  }
+};
+
+struct BLOB
+{
+  uint8_t*  m_Data;
+  size_t    m_Size;
+
+  BLOB() : m_Data(nullptr), m_Size(0)
+  {
+  }
+
+  BLOB(uint8_t* data, size_t size) : m_Data(data), m_Size(size)
+  {
+  }
+};
+
+class PyGlobal
+{
+public:
+  static void initModule(py::module& m);
+};
+
+class PyDescriptorStringContainer
+{
+public:
+  static const char *Add(std::string const &descriptorString)
+  {
+    static std::set<std::string> s_descriptorStrings;
+    static std::mutex s_mutex;
+    std::unique_lock<std::mutex> lock(s_mutex);
+    return s_descriptorStrings.insert(descriptorString).first->c_str();
+  }
+};
+
+template <typename T>
+class SharedPtrNoDeleteWrapper : private std::shared_ptr<T>
+{
+public:
+  SharedPtrNoDeleteWrapper(std::shared_ptr<T> const &ptr) : std::shared_ptr<T>(ptr) {}
+  SharedPtrNoDeleteWrapper(T *ptr) : std::shared_ptr<T>(ptr, [](T *){}) {}
+  T *get() { return std::shared_ptr<T>::get(); }
+};
+
+PYBIND11_DECLARE_HOLDER_TYPE(T, SharedPtrNoDeleteWrapper<T>)
+
+#endif

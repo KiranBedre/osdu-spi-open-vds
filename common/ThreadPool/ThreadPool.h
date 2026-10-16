@@ -1,0 +1,152 @@
+/****************************************************************************
+** Copyright 2019 The Open Group
+** Copyright 2019 Bluware, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+****************************************************************************/
+
+#pragma once
+
+#include <condition_variable>
+#include <functional>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <vector>
+#include <cstdlib>
+#include <string>
+
+class ThreadPool
+{
+public:
+  ThreadPool(size_t);
+  template <class F>
+  auto Enqueue(F&& f)
+    ->std::future<typename std::result_of<F()>::type>;
+  ~ThreadPool();
+
+  size_t ThreadCount() const;
+  std::thread::id ThreadID(int worker) const;
+
+  static int ConfigureThreadCount(const char *envVariableName, int defaultValue = std::thread::hardware_concurrency());
+private:
+  std::vector<std::thread> workers;
+  std::queue<std::function<void()>> tasks;
+
+  std::mutex queue_mutex;
+  std::condition_variable condition;
+  bool stop;
+};
+
+inline ThreadPool::ThreadPool(size_t threads)
+  : stop(false)
+{
+  for (size_t i = 0; i < threads; ++i)
+    workers.emplace_back(
+      [this]
+      {
+        for (;;)
+        {
+          std::function<void()> task;
+
+          {
+            std::unique_lock<std::mutex> lock(this->queue_mutex);
+            this->condition.wait(lock,
+              [this]
+              {
+                return this->stop || !this->tasks.empty();
+              });
+            if (this->stop && this->tasks.empty())
+              return;
+            task = std::move(this->tasks.front());
+            this->tasks.pop();
+          }
+
+          task();
+        }
+      });
+}
+
+template <class F>
+auto ThreadPool::Enqueue(F && f)
+-> std::future<typename std::result_of<F()>::type>
+{
+  using return_type = typename std::result_of<F()>::type;
+
+  auto task = std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
+
+  std::future<return_type> res = task->get_future();
+  {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+
+    if (stop)
+    {
+      fprintf(stderr, "enqueue on stopped ThreadPool");
+      abort();
+    }
+
+    tasks.emplace([task]()
+      {
+        (*task)();
+      });
+  }
+  condition.notify_one();
+  return res;
+}
+
+inline ThreadPool::~ThreadPool()
+{
+  {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    stop = true;
+  }
+  condition.notify_all();
+  for (std::thread& worker : workers)
+    worker.join();
+}
+
+inline size_t ThreadPool::ThreadCount() const
+{
+  return workers.size();
+}
+
+inline std::thread::id ThreadPool::ThreadID(int worker) const
+{
+  return const_cast<std::thread&>(workers[worker]).get_id();
+}
+
+inline int ThreadPool::ConfigureThreadCount(const char *envVariableName, int defaultValue)
+{
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4996)
+#endif
+  if (const char *envVariable = std::getenv(envVariableName))
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+  {
+    try
+    {
+      int threadCount = std::stoi(std::string(envVariable));
+      if (threadCount > 0)
+        return threadCount;
+    }
+    catch (...)
+    {
+    }
+  }
+  return defaultValue;
+}

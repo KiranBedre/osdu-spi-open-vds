@@ -1,0 +1,220 @@
+From fe8d142a9d75b52695d75590a8c70d59dae624ea Mon Sep 17 00:00:00 2001
+From: Morten Ofstad <morten.ofstad@bluware.com>
+Date: Wed, 21 Jan 2026 12:46:35 +0100
+Subject: [PATCH] Fix use of namespace qualifiers that are incompatible with
+ Visual Studio 2017
+
+---
+ .../src/client_certificate_credential.cpp          | 14 +++++++-------
+ .../src/client_secret_credential.cpp               | 10 +++++-----
+ .../src/default_azure_credential.cpp               |  2 +-
+ .../azure-identity/src/environment_credential.cpp  |  4 ++--
+ .../azure-identity/src/managed_identity_source.cpp |  6 +++---
+ .../src/workload_identity_credential.cpp           |  8 ++++----
+ 6 files changed, 22 insertions(+), 22 deletions(-)
+
+diff --git a/sdk/identity/azure-identity/src/client_certificate_credential.cpp b/sdk/identity/azure-identity/src/client_certificate_credential.cpp
+index d6dd48e49..818d96d87 100644
+--- a/sdk/identity/azure-identity/src/client_certificate_credential.cpp
++++ b/sdk/identity/azure-identity/src/client_certificate_credential.cpp
+@@ -536,7 +536,7 @@ ClientCertificateCredential::ClientCertificateCredential(
+     std::string const& authorityHost,
+     std::vector<std::string> additionallyAllowedTenants,
+     bool sendCertificateChain,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : TokenCredential("ClientCertificateCredential"),
+       m_clientCredentialCore(tenantId, authorityHost, additionallyAllowedTenants),
+       m_tokenCredentialImpl(std::make_unique<TokenCredentialImpl>(options)),
+@@ -593,7 +593,7 @@ ClientCertificateCredential::ClientCertificateCredential(
+     std::string const& authorityHost,
+     std::vector<std::string> additionallyAllowedTenants,
+     bool sendCertificateChain,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : TokenCredential("ClientCertificateCredential"),
+       m_clientCredentialCore(tenantId, authorityHost, additionallyAllowedTenants),
+       m_tokenCredentialImpl(std::make_unique<TokenCredentialImpl>(options)),
+@@ -627,7 +627,7 @@ ClientCertificateCredential::ClientCertificateCredential(
+     std::string tenantId,
+     std::string const& clientId,
+     std::string const& clientCertificatePath,
+-    ClientCertificateCredentialOptions const& options)
++    Azure::Identity::ClientCertificateCredentialOptions const& options)
+     : ClientCertificateCredential(
+         tenantId,
+         clientId,
+@@ -643,13 +643,13 @@ ClientCertificateCredential::ClientCertificateCredential(
+     std::string tenantId,
+     std::string const& clientId,
+     std::string const& clientCertificatePath,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : ClientCertificateCredential(
+         tenantId,
+         clientId,
+         clientCertificatePath,
+-        ClientCertificateCredentialOptions{}.AuthorityHost,
+-        ClientCertificateCredentialOptions{}.AdditionallyAllowedTenants,
++        Azure::Identity::ClientCertificateCredentialOptions{}.AuthorityHost,
++        Azure::Identity::ClientCertificateCredentialOptions{}.AdditionallyAllowedTenants,
+         false, // By default, we don't send the x5c property
+         options)
+ {
+@@ -660,7 +660,7 @@ ClientCertificateCredential::ClientCertificateCredential(
+     std::string const& clientId,
+     std::string const& clientCertificate,
+     std::string const& privateKey,
+-    ClientCertificateCredentialOptions const& options)
++    Azure::Identity::ClientCertificateCredentialOptions const& options)
+     : ClientCertificateCredential(
+         tenantId,
+         clientId,
+diff --git a/sdk/identity/azure-identity/src/client_secret_credential.cpp b/sdk/identity/azure-identity/src/client_secret_credential.cpp
+index f7f3fdabb..60f10dbfe 100644
+--- a/sdk/identity/azure-identity/src/client_secret_credential.cpp
++++ b/sdk/identity/azure-identity/src/client_secret_credential.cpp
+@@ -23,7 +23,7 @@ ClientSecretCredential::ClientSecretCredential(
+     std::string const& clientSecret,
+     std::string const& authorityHost,
+     std::vector<std::string> additionallyAllowedTenants,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : TokenCredential("ClientSecretCredential"),
+       m_clientCredentialCore(tenantId, authorityHost, additionallyAllowedTenants),
+       m_tokenCredentialImpl(std::make_unique<TokenCredentialImpl>(options)),
+@@ -37,7 +37,7 @@ ClientSecretCredential::ClientSecretCredential(
+     std::string tenantId,
+     std::string const& clientId,
+     std::string const& clientSecret,
+-    ClientSecretCredentialOptions const& options)
++    Azure::Identity::ClientSecretCredentialOptions const& options)
+     : ClientSecretCredential(
+         tenantId,
+         clientId,
+@@ -52,13 +52,13 @@ ClientSecretCredential::ClientSecretCredential(
+     std::string tenantId,
+     std::string const& clientId,
+     std::string const& clientSecret,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : ClientSecretCredential(
+         tenantId,
+         clientId,
+         clientSecret,
+-        ClientSecretCredentialOptions{}.AuthorityHost,
+-        ClientSecretCredentialOptions{}.AdditionallyAllowedTenants,
++        Azure::Identity::ClientSecretCredentialOptions{}.AuthorityHost,
++        Azure::Identity::ClientSecretCredentialOptions{}.AdditionallyAllowedTenants,
+         options)
+ {
+ }
+diff --git a/sdk/identity/azure-identity/src/default_azure_credential.cpp b/sdk/identity/azure-identity/src/default_azure_credential.cpp
+index 1b859893d..98f8ff94c 100644
+--- a/sdk/identity/azure-identity/src/default_azure_credential.cpp
++++ b/sdk/identity/azure-identity/src/default_azure_credential.cpp
+@@ -23,7 +23,7 @@ using Azure::Core::Diagnostics::Logger;
+ using Azure::Identity::_detail::IdentityLog;
+ 
+ DefaultAzureCredential::DefaultAzureCredential(
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : TokenCredential("DefaultAzureCredential")
+ {
+   // Initializing m_credential below and not in the member initializer list to have a specific order
+diff --git a/sdk/identity/azure-identity/src/environment_credential.cpp b/sdk/identity/azure-identity/src/environment_credential.cpp
+index 1e15c598e..7a552bbcc 100644
+--- a/sdk/identity/azure-identity/src/environment_credential.cpp
++++ b/sdk/identity/azure-identity/src/environment_credential.cpp
+@@ -38,7 +38,7 @@ void PrintCredentialCreationLogMessage(
+ } // namespace
+ 
+ EnvironmentCredential::EnvironmentCredential(
+-    Core::Credentials::TokenCredentialOptions const& options,
++    TokenCredentialOptions const& options,
+     std::vector<std::string> const& additionallyAllowedTenants)
+     : TokenCredential("EnvironmentCredential")
+ {
+@@ -134,7 +134,7 @@ EnvironmentCredential::EnvironmentCredential(
+ }
+ 
+ EnvironmentCredential::EnvironmentCredential(
+-    Core::Credentials::TokenCredentialOptions const& options)
++    TokenCredentialOptions const& options)
+     : EnvironmentCredential(options, {})
+ {
+ }
+diff --git a/sdk/identity/azure-identity/src/managed_identity_source.cpp b/sdk/identity/azure-identity/src/managed_identity_source.cpp
+index 93a5969bf..e2199fa31 100644
+--- a/sdk/identity/azure-identity/src/managed_identity_source.cpp
++++ b/sdk/identity/azure-identity/src/managed_identity_source.cpp
+@@ -263,7 +263,7 @@ std::unique_ptr<ManagedIdentitySource> AppServiceV2017ManagedIdentitySource::Cre
+     std::string const& clientId,
+     std::string const& objectId,
+     std::string const& resourceId,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    Azure::Core::Credentials::TokenCredentialOptions const& options)
+ {
+   return AppServiceManagedIdentitySource::Create<AppServiceV2017ManagedIdentitySource>(
+       credName, clientId, objectId, resourceId, options, "MSI_ENDPOINT", "MSI_SECRET", "2017");
+@@ -274,7 +274,7 @@ std::unique_ptr<ManagedIdentitySource> AppServiceV2019ManagedIdentitySource::Cre
+     std::string const& clientId,
+     std::string const& objectId,
+     std::string const& resourceId,
+-    Core::Credentials::TokenCredentialOptions const& options)
++    Azure::Core::Credentials::TokenCredentialOptions const& options)
+ {
+   return AppServiceManagedIdentitySource::Create<AppServiceV2019ManagedIdentitySource>(
+       credName,
+@@ -566,7 +566,7 @@ ImdsManagedIdentitySource::ImdsManagedIdentitySource(
+ 
+   m_request.SetHeader("Metadata", "true");
+ 
+-  Core::Credentials::TokenCredentialOptions firstRequestOptions = options;
++  Azure::Core::Credentials::TokenCredentialOptions firstRequestOptions = options;
+   firstRequestOptions.Retry.MaxRetries = 0;
+   m_firstRequestPipeline = std::make_unique<TokenCredentialImpl>(firstRequestOptions);
+   m_firstRequestSucceeded = false;
+diff --git a/sdk/identity/azure-identity/src/workload_identity_credential.cpp b/sdk/identity/azure-identity/src/workload_identity_credential.cpp
+index 59711966b..c2a549747 100644
+--- a/sdk/identity/azure-identity/src/workload_identity_credential.cpp
++++ b/sdk/identity/azure-identity/src/workload_identity_credential.cpp
+@@ -25,7 +25,7 @@ using Azure::Identity::_detail::IdentityLog;
+ using Azure::Identity::_detail::TenantIdResolver;
+ 
+ WorkloadIdentityCredential::WorkloadIdentityCredential(
+-    WorkloadIdentityCredentialOptions const& options)
++    Azure::Identity::WorkloadIdentityCredentialOptions const& options)
+     : TokenCredential("WorkloadIdentityCredential")
+ {
+   std::string tenantId = options.TenantId;
+@@ -36,7 +36,7 @@ WorkloadIdentityCredential::WorkloadIdentityCredential(
+   {
+     ClientAssertionCredentialOptions clientAssertionCredentialOptions{};
+     // Get the options from the base class (including ClientOptions).
+-    static_cast<Core::Credentials::TokenCredentialOptions&>(clientAssertionCredentialOptions)
++    static_cast<Azure::Core::Credentials::TokenCredentialOptions&>(clientAssertionCredentialOptions)
+         = options;
+     clientAssertionCredentialOptions.AuthorityHost = options.AuthorityHost;
+     clientAssertionCredentialOptions.AdditionallyAllowedTenants
+@@ -60,7 +60,7 @@ WorkloadIdentityCredential::WorkloadIdentityCredential(
+ }
+ 
+ WorkloadIdentityCredential::WorkloadIdentityCredential(
+-    Core::Credentials::TokenCredentialOptions const& options)
++    Azure::Core::Credentials::TokenCredentialOptions const& options)
+     : TokenCredential("WorkloadIdentityCredential")
+ {
+   std::string const tenantId = _detail::DefaultOptionValues::GetTenantId();
+@@ -71,7 +71,7 @@ WorkloadIdentityCredential::WorkloadIdentityCredential(
+   {
+     ClientAssertionCredentialOptions clientAssertionCredentialOptions{};
+     // Get the options from the base class (including ClientOptions).
+-    static_cast<Core::Credentials::TokenCredentialOptions&>(clientAssertionCredentialOptions)
++    static_cast<Azure::Core::Credentials::TokenCredentialOptions&>(clientAssertionCredentialOptions)
+         = options;
+ 
+     std::function<std::string(Context const&)> callback
+-- 
+2.40.0.windows.1
+

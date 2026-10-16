@@ -1,0 +1,7 @@
+macro(BuildAzureSdkForCpp)
+  #if (WIN32)
+  #  set(WIL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  #  add_subdirectory(${wil_SOURCE_DIR})
+  #endif()
+  add_subdirectory(3rdparty/BuildAzureSdkForCpp)
+endmacro()
