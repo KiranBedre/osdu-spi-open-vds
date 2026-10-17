@@ -48,8 +48,10 @@ docker build --file .spi/image/Dockerfile --target spi-test .
 docker build --file .spi/image/Dockerfile .
 ```
 
-The trusted publication lane builds `linux/amd64` and `linux/arm64`. Pull
-request native tests run on `linux/amd64`.
+The trusted publication lane builds `linux/amd64`, matching the SPI Stack
+build platform and its `Standard_D4lds_v5` AKS nodes. Pull request native
+tests run on the same architecture. Arm64 publication remains disabled
+because the upstream deserialization suite does not pass on that platform.
 
 ## Acceptance and certification
 
