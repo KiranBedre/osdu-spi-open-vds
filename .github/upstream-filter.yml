@@ -1,0 +1,92 @@
+# Per-service upstream filter config (ADR-038), planted at fork initialization
+# with open-vds substituted from the upstream repository name.
+# Every upstream top-level entry, testing/ entry, root pom profile, and
+# .fossa.yml module must appear here: the engine halts rather than guess.
+# Entries absent from a given upstream tree are inert, so this file carries the
+# superset of the conventional OSDU service shape. A service that deviates
+# maintains its own copy of this file on the fork's main branch.
+service: open-vds
+
+top_level:
+  .config: keep
+  .dockerignore: keep
+  .editorconfig: keep
+  .envrc.template: keep
+  .fossa.yml: keep
+  .gitattributes: keep
+  .gitignore: keep
+  .gitlab: strip
+  .gitlab-ci.yml: strip
+  .mvn: keep
+  .sonarlint: keep
+  .trufflehog-exclude: strip
+  LICENSE: keep
+  NOTICE: keep
+  README.md: strip
+  docs: keep
+  pom.xml: keep
+  publish.yml: strip
+  open-vds-acceptance-test: keep
+  open-vds-core: keep
+  open-vds-core-plus: strip
+
+testing:
+  INTEGRATION-TESTS.md: keep
+  README.md: keep
+  maven: keep
+  pom.xml: keep
+  open-vds-test-core: keep
+  open-vds-test-azure: fork
+  open-vds-test-aws: strip
+  open-vds-test-baremetal: strip
+  open-vds-test-core-plus: strip
+  open-vds-test-gc: strip
+  open-vds-test-gcp: strip
+  open-vds-test-ibm: strip
+  open-vds-test-jdbc: strip
+
+profiles:
+  Default: keep
+  core: keep
+  azure: inject
+  aws: strip
+  gc: strip
+  gcp: strip
+  ibm: strip
+
+fossa_modules:
+  open-vds: keep
+  open-vds-service: keep
+  open-vds-core: keep
+  open-vds-core-plus: strip
+  open-vds-azure: strip
+  open-vds-aws: strip
+  open-vds-gc: strip
+  open-vds-gcp: strip
+  open-vds-ibm: strip
+  open-vds-jdbc: strip
+
+expected_kept:
+  - pom.xml
+  - open-vds-core
+  - testing/open-vds-test-core
+
+expected_absent:
+  - provider
+  - devops
+  - open-vds-core-plus
+  - .gitlab-ci.yml
+  - testing/open-vds-test-azure
+  - testing/open-vds-test-aws
+  - testing/open-vds-test-core-plus
+
+inject_root_pom_azure_profile: |
+      <profile>
+        <id>azure</id>
+        <modules>
+          <module>provider/open-vds-azure</module>
+        </modules>
+      </profile>
+
+inject_testing_pom_azure_module: |
+      <module>open-vds-test-azure</module>
