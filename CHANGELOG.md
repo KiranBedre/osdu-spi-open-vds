@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.1](https://github.com/KiranBedre/osdu-spi-open-vds/compare/v1.3.0...v1.3.1) (2026-10-23)
+
+
+### 🔧 Miscellaneous
+
+* Sync template updates ([#9](https://github.com/KiranBedre/osdu-spi-open-vds/issues/9)) ([3a4e090](https://github.com/KiranBedre/osdu-spi-open-vds/commit/3a4e0901232ecb38c25f4a40977ff5def3b74971))
+* **template-sync:** Sync reconciled template ([2597b24](https://github.com/KiranBedre/osdu-spi-open-vds/commit/2597b24e71148f2f29a05f8d71e1710d336481c0))
+* **template-sync:** Sync template updates ([4349fd2](https://github.com/KiranBedre/osdu-spi-open-vds/commit/4349fd245587eabfd8ae609db603d590e5eeb6d7))
+
 ## [1.3.0](https://github.com/KiranBedre/osdu-spi-open-vds/compare/v1.2.0...v1.3.0) (2026-10-17)
 
 
