@@ -22,7 +22,6 @@
 #ifndef OPENVDS_NO_AWS_IOMANAGER
 #include "AwsDmsIoManagerFactory.h"
 #include "AnthosDmsIoManagerFactory.h"
-#include "IbmDmsIoManagerFactory.h"
 #endif //OPENVDS_NO_AWS_IOMANAGER
 #ifndef OPENVDS_NO_GCP_IOMANAGER
 #include "GcpDmsIoManagerFactory.h"
@@ -419,8 +418,6 @@ DmsIoManagerFactory* DmsIoManagerFactory::createDmsIoManagerFactory(const std::s
     return new AwsDmsIoManagerFactory(dataset, logger);
   if (serviceProvider == "anthos")
     return new AnthosDmsIoManagerFactory(dataset, logger);
-  if (serviceProvider == "ibm")
-    return new IbmDmsIoManagerFactory(dataset, logger);
 #endif
 #ifndef OPENVDS_NO_GCP_IOMANAGER
   return new GcpDmsIoManagerFactory(dataset, logger);
