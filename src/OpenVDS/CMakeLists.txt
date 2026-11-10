@@ -59,7 +59,6 @@ else()
     IO/DmsIoFactories/AwsDmsIoManagerFactory.cpp
     IO/DmsIoFactories/DmsIoManagerFactory.cpp
     IO/DmsIoFactories/AnthosDmsIoManagerFactory.cpp
-    IO/DmsIoFactories/IbmDmsIoManagerFactory.cpp
     IO/DmsIoFactories/GcpDmsIoManagerFactory.cpp
     IO/SslVerifyPeerEnv.cpp
     IO/SDPath.cpp
@@ -115,7 +114,6 @@ else()
     IO/DmsIoFactories/AwsDmsIoManagerFactory.h
     IO/DmsIoFactories/DmsIoManagerFactory.h
     IO/DmsIoFactories/AnthosDmsIoManagerFactory.h
-    IO/DmsIoFactories/IbmDmsIoManagerFactory.h
     IO/DmsIoFactories/GcpDmsIoManagerFactory.h
     VDS/VDS.h
     VDS/VolumeDataPartition.h
@@ -254,7 +252,6 @@ if (NOT EMSCRIPTEN)
     target_compile_definitions(openvds_objects PRIVATE OPENVDS_NO_AWS_IOMANAGER)
     set_source_files_properties(IO/IOManagerAWSCurl.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
     set_source_files_properties(IO/DmsIoFactories/AwsDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
-    set_source_files_properties(IO/DmsIoFactories/IbmDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
     set_source_files_properties(IO/DmsIoFactories/AnthosDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
   else()
     if (aws-cpp-sdk_EXTERNAL_LIBS)
@@ -321,7 +318,6 @@ if (NOT EMSCRIPTEN)
     set_source_files_properties(IO/DmsIoFactories/AwsDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
     set_source_files_properties(IO/DmsIoFactories/DmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
     set_source_files_properties(IO/DmsIoFactories/AnthosDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
-    set_source_files_properties(IO/DmsIoFactories/IbmDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
     set_source_files_properties(IO/DmsIoFactories/GcpDmsIoManagerFactory.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
   endif()
 
